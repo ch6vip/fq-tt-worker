@@ -51,6 +51,10 @@ async function putJson(kv: EdgeOneKV, key: string, value: unknown): Promise<void
   await kv.put(key, JSON.stringify(value));
 }
 
+function kvSafePart(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
 async function listAllKeys(kv: EdgeOneKV, prefix: string): Promise<string[]> {
   const names: string[] = [];
   let cursor: string | undefined;
@@ -73,11 +77,11 @@ export class EdgeOneKVDevicePool implements DevicePoolStore {
   constructor(private kv: EdgeOneKV) {}
 
   private key(deviceId: string): string {
-    return `device:${deviceId}`;
+    return `device_${kvSafePart(deviceId)}`;
   }
 
   private async listDevices(): Promise<StoredDevice[]> {
-    const keys = await listAllKeys(this.kv, 'device:');
+    const keys = await listAllKeys(this.kv, 'device_');
     const rows = await Promise.all(keys.map(key => getJson<StoredDevice>(this.kv, key)));
     return rows.filter((row): row is StoredDevice => !!row);
   }
@@ -162,11 +166,11 @@ export class EdgeOneKVStats implements StatsStore {
   constructor(private kv: EdgeOneKV) {}
 
   private apiKey(api: string): string {
-    return `stats:api:${encodeURIComponent(api)}`;
+    return `stats_api_${kvSafePart(api)}`;
   }
 
   private hourlyKey(api: string, bucket: number): string {
-    return `stats:hour:${bucket}:${encodeURIComponent(api)}`;
+    return `stats_hour_${bucket}_${kvSafePart(api)}`;
   }
 
   async record(api: string): Promise<void> {
@@ -191,7 +195,7 @@ export class EdgeOneKVStats implements StatsStore {
   }
 
   async snapshot(): Promise<Array<{ api: string; call_count: number; last_called: number }>> {
-    const keys = await listAllKeys(this.kv, 'stats:api:');
+    const keys = await listAllKeys(this.kv, 'stats_api_');
     const rows = await Promise.all(keys.map(key => getJson<ApiStat>(this.kv, key)));
     return rows
       .filter((row): row is ApiStat => !!row)
@@ -206,7 +210,7 @@ export class EdgeOneKVStats implements StatsStore {
 
   async todayCalls(): Promise<number> {
     const todayStart = Math.floor(Date.now() / 86400000) * 86400;
-    const keys = await listAllKeys(this.kv, 'stats:hour:');
+    const keys = await listAllKeys(this.kv, 'stats_hour_');
     const rows = await Promise.all(keys.map(key => getJson<HourlyStat>(this.kv, key)));
     return rows
       .filter((row): row is HourlyStat => !!row && row.hour_bucket >= todayStart)
@@ -215,7 +219,7 @@ export class EdgeOneKVStats implements StatsStore {
 
   async cleanupHourly(retentionMs = 7 * 24 * 3600 * 1000): Promise<number> {
     const cutoff = Math.floor((Date.now() - retentionMs) / 3600000) * 3600;
-    const keys = await listAllKeys(this.kv, 'stats:hour:');
+    const keys = await listAllKeys(this.kv, 'stats_hour_');
     let removed = 0;
     for (const key of keys) {
       const row = await getJson<HourlyStat>(this.kv, key);
@@ -228,21 +232,21 @@ export class EdgeOneKVStats implements StatsStore {
   }
 
   async getMeta(key: string): Promise<number | null> {
-    const value = await this.kv.get(`meta:${key}`);
+    const value = await this.kv.get(`meta_${kvSafePart(key)}`);
     if (value == null) return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
   }
 
   async setMeta(key: string, value: number, mode: 'upsert' | 'insert-if-missing' = 'upsert'): Promise<void> {
-    const kvKey = `meta:${key}`;
+    const kvKey = `meta_${kvSafePart(key)}`;
     if (mode === 'insert-if-missing' && await this.kv.get(kvKey) != null) return;
     await this.kv.put(kvKey, String(value));
   }
 }
 
 export async function probeKV(kv: EdgeOneKV): Promise<unknown> {
-  const key = `probe:${Date.now()}`;
+  const key = `probe_${Date.now()}`;
   const value = String(Math.floor(Math.random() * 1_000_000));
   await kv.put(key, value);
   const readBack = await kv.get(key);
