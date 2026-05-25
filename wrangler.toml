@@ -30,4 +30,3 @@ MIN_POOL_SIZE = "10"
 #   ARGUS_SIGN_KEY   — 32-byte hex, Simon key
 #   ARGUS_AES_KEY    — 16-byte hex, AES-128-CBC key
 #   ARGUS_AES_IV     — 16-byte hex, AES-128-CBC iv
-#   AUTH_PASSWORD    — gate for /stats_detail etc.

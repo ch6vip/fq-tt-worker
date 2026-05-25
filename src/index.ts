@@ -1,7 +1,6 @@
 // Worker entry. Exposes:
 //   GET /sign?q=...         — debug: returns the signature headers
-//   GET /api/?api=stats_detail&password=...  — pool health
-//   GET /api/?api=device_pool                — raw device list
+//   GET /api/?api=stats_detail  — pool health
 // Scheduled trigger (every 2min) cleans dead rows and warns if pool is low.
 //
 // Real endpoints (search/content/book/...) are NOT yet ported — they'll
@@ -25,6 +24,7 @@ import { handleFull } from './endpoints/full.js';
 import { handleVideo } from './endpoints/video.js';
 import { handleManga } from './endpoints/manga.js';
 import { handleBook } from './endpoints/book.js';
+import { handleDashboard } from './endpoints/dashboard.js';
 import type { EndpointContext } from './endpoints/base.js';
 
 export interface Env {
@@ -37,7 +37,6 @@ export interface Env {
   USER_AGENT: string;
   GORGON_ALGORITHM: string;
   MIN_POOL_SIZE: string;
-  AUTH_PASSWORD?: string;
   ARGUS_SIGN_KEY?: string;
   ARGUS_AES_KEY?: string;
   ARGUS_AES_IV?: string;
@@ -81,42 +80,28 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 // --- Free plan guardrails ---
-// In-memory request counter per isolate. Resets when the isolate is evicted.
-// Not globally precise (multiple isolates), but prevents a single instance
-// from burning through the 100K/day request quota.
-let dailyCounter = 0;
-let counterDay = 0; // day-of-year when counter was last reset
-
-function checkRateLimit(): Response | null {
-  const now = new Date();
-  const today = now.getUTCFullYear() * 1000 + now.getUTCMonth() * 32 + now.getUTCDate();
-  if (today !== counterDay) { dailyCounter = 0; counterDay = today; }
-  dailyCounter++;
-  if (dailyCounter > 80000) {
-    return new Response(JSON.stringify({ success: false, error: 'rate limit exceeded' }), {
-      status: 429,
-      headers: { 'content-type': 'application/json', 'retry-after': '3600' },
-    });
-  }
-  return null;
-}
+// Cloudflare Workers runtime already enforces CPU/wall-time limits per request.
+// We don't add an in-memory daily counter here because module-level state lives
+// per-isolate and can't enforce a real Worker-wide quota.
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const limited = checkRateLimit();
-    if (limited) return limited;
-
     const url = new URL(req.url);
-    const api = url.searchParams.get('api') ?? '';
+    if (url.pathname === '/favicon.ico') return new Response(null, { status: 204 });
+    // Root path defaults to dashboard so the bare Worker URL is human-browsable.
+    const api = url.searchParams.get('api') ?? (url.pathname === '/' ? 'dashboard' : '');
 
     const sigOpts = buildSignatureOptions(env);
     const pool = new DevicePoolManager(env.DB);
     const stats = new StatsManager(env.DB);
     const endpointCtx: EndpointContext = { sigOpts, pool, ctx };
 
-    // Stats: 10% sampling to save D1 writes. Each write increments by 10.
-    if (api && Math.random() < 0.1) {
-      ctx.waitUntil(stats.recordSampled(api).catch(() => {}));
+    // Count every endpoint hit. No sampling; D1 free tier (100K writes/day) is
+    // plenty for a personal proxy. We don't currently distinguish success/fail.
+    if (api && api !== 'dashboard' && api !== 'stats_detail' && api !== 'sign') {
+      ctx.waitUntil(
+        Promise.all([stats.record(api), stats.recordHourlyHit(api)]).catch(() => {})
+      );
     }
 
     if (url.pathname === '/sign' || api === 'sign') {
@@ -125,24 +110,14 @@ export default {
       return jsonResponse({ success: true, query: q, headers });
     }
 
+    if (api === 'dashboard') {
+      return handleDashboard(env, stats, pool);
+    }
+
     if (api === 'stats_detail') {
-      if (env.AUTH_PASSWORD && url.searchParams.get('password') !== env.AUTH_PASSWORD) {
-        return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-      }
       const ready = await pool.countReady();
       const counters = await stats.snapshot();
       return jsonResponse({ success: true, data: { ready_devices: ready, ts: Date.now(), counters } });
-    }
-
-    if (api === 'device_pool') {
-      if (env.AUTH_PASSWORD && url.searchParams.get('password') !== env.AUTH_PASSWORD) {
-        return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-      }
-      const { results } = await env.DB.prepare(
-        `SELECT device_id, status, last_used, use_count, created_at
-         FROM devices ORDER BY created_at DESC`
-      ).all();
-      return jsonResponse({ success: true, data: results });
     }
 
     if (api === 'item_info')        return handleItemInfo(req, endpointCtx);
@@ -152,7 +127,7 @@ export default {
     if (api === 'book_share')       return handleBookShare(req, endpointCtx);
     if (api === 'content')          return handleContent(req, endpointCtx);
     if (api === 'wkcontent')        return handleWkcontent(req, endpointCtx);
-    if (api === 'toutiao_article')  return handleToutiaoArticle(req, env.AUTH_PASSWORD);
+    if (api === 'toutiao_article')  return handleToutiaoArticle(req);
     if (api === 'toutiao')          return handleToutiao(req, endpointCtx);
     if (api === 'full')             return handleFull(req, endpointCtx);
     if (api === 'video')            return handleVideo(req, endpointCtx);
@@ -164,7 +139,7 @@ export default {
       success: false,
       error: api ? `endpoint not yet ported: ${api}` : 'missing ?api=',
       available_now: [
-        'sign (debug)', 'stats_detail', 'device_pool',
+        'sign (debug)', 'stats_detail',
         'item_info', 'player', 'search', 'directory', 'book_share',
         'content', 'wkcontent', 'toutiao_article', 'toutiao', 'full',
         'video (partial)', 'manga (partial)', 'book',
@@ -178,9 +153,27 @@ export default {
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const pool = new DevicePoolManager(env.DB);
+    const stats = new StatsManager(env.DB);
+
+    // Record cron heartbeat unconditionally so the dashboard can detect
+    // whether the schedule is actually firing (independent of refill activity).
+    // Also seed first_run on the very first cron tick (used for uptime display).
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO meta(key,value) VALUES('last_cron_run',?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+      ).bind(Date.now()),
+      env.DB.prepare(
+        `INSERT INTO meta(key,value) VALUES('first_run',?)
+         ON CONFLICT(key) DO NOTHING`
+      ).bind(Date.now()),
+    ]);
 
     const removed = await pool.cleanup(7 * 24 * 60 * 60 * 1000);
     if (removed > 0) console.log(`cron: cleaned ${removed} dead/expired devices`);
+
+    const statsRemoved = await stats.cleanupHourly();
+    if (statsRemoved > 0) console.log(`cron: cleaned ${statsRemoved} old hourly stats rows`);
 
     const target = parseInt(env.MIN_POOL_SIZE, 10);
     const ready = await pool.countReady();
