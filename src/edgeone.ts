@@ -32,7 +32,16 @@ class EdgeOneWaitUntil {
 
 function getGlobalKV(): EdgeOneKV | undefined {
   const g = globalThis as unknown as Record<string, unknown>;
-  return g.FQTT_KV as EdgeOneKV | undefined;
+  if (g.FQTT_KV) return g.FQTT_KV as EdgeOneKV;
+
+  try {
+    // EdgeOne KV docs show bound namespaces as direct global identifiers
+    // (`await my_kv.get(...)`). In some runtimes that identifier is not an
+    // enumerable globalThis property, so probe it explicitly.
+    return (0, eval)('typeof FQTT_KV !== "undefined" ? FQTT_KV : undefined') as EdgeOneKV | undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function requiredEnv(env: EdgeOneEnv | undefined): RuntimeEnv & { FQTT_KV: EdgeOneKV } {
@@ -60,7 +69,6 @@ function requiredEnv(env: EdgeOneEnv | undefined): RuntimeEnv & { FQTT_KV: EdgeO
 
 export async function onRequest(context: EdgeOneContext): Promise<Response> {
   const { request, env } = context;
-  const runtimeEnv = requiredEnv(env);
   const waitUntil = new EdgeOneWaitUntil();
   const waitUntilAdapter = {
     waitUntil: (task: Promise<unknown>) => {
@@ -69,6 +77,7 @@ export async function onRequest(context: EdgeOneContext): Promise<Response> {
     },
   };
   try {
+    const runtimeEnv = requiredEnv(env);
     const response = await handleAppRequest(request, runtimeEnv, {
       pool: new EdgeOneKVDevicePool(runtimeEnv.FQTT_KV),
       stats: new EdgeOneKVStats(runtimeEnv.FQTT_KV),
