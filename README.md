@@ -1,79 +1,180 @@
 # fq-tt-worker
 
-Cloudflare Worker 版番茄小说 API 代理。将 [fq-tt](https://github.com/ch6vip/fq-tt) PHP 项目的签名链路移植到 TypeScript，设备池存 D1，注册由 cron 后台处理。
+Cloudflare Worker 版番茄小说 API 代理。
 
-**开箱即用** — clone → `npm install` → 创建 D1 → deploy，无需额外配置。
+将 [fq-tt](https://github.com/ch6vip/fq-tt) 的 PHP 签名链路完整移植到 TypeScript，运行在 Cloudflare Workers 上。设备池存 D1 数据库，设备注册由 cron 后台自动处理。
 
-## 快速部署
+## 特性
+
+- 14 个 API 端点全部可用
+- 加密链路与 PHP 原版 byte-for-byte 一致（54 项 oracle 测试验证）
+- 设备池原子操作（D1 `UPDATE...RETURNING`）
+- cron 自动注册设备、清理过期设备
+- Free 计划友好：内置限流、stats 采样、CPU 优化
+
+## 部署
+
+### 前置条件
+
+- Node.js >= 18
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)（`npm install -g wrangler`）
+- Cloudflare 账号（Free 计划即可）
+
+### 步骤
 
 ```bash
+# 1. 克隆并安装依赖
 git clone https://github.com/ch6vip/fq-tt-worker.git
 cd fq-tt-worker
 npm install
 
-# 创建 D1 数据库
-npx wrangler d1 create fq-tt-pool
-# 把输出的 database_id 粘贴到 wrangler.toml 的 database_id 字段
+# 2. 登录 Cloudflare（首次）
+wrangler login
 
-# 建表
+# 3. 创建 D1 数据库
+npx wrangler d1 create fq-tt-pool
+```
+
+将输出中的 `database_id` 填入 `wrangler.toml`：
+
+```toml
+database_id = "你的-database-id"
+```
+
+```bash
+# 4. 远程建表
 npm run db:migrate
 
-# 部署
+# 5. 部署
 npm run deploy
 ```
 
-部署后 cron 每 10 分钟自动注册设备填充池，约 1-2 个周期后即可正常使用。
+部署完成后会输出 Worker URL（如 `https://fq-tt-worker.你的用户名.workers.dev`）。
 
-### 可选：设置密码保护
+cron 每 10 分钟自动注册设备填充池，首次部署后等待 1-2 个周期即可正常使用。
+
+### 可选配置
 
 ```bash
+# 设置密码保护 stats_detail 和 device_pool 端点
 wrangler secret put AUTH_PASSWORD
-# 输入你想要的密码，用于保护 stats_detail 和 device_pool 端点
 ```
 
-加密密钥已内置在代码中（与 PHP 原版相同），无需额外配置。
+加密密钥已内置在代码中，无需额外配置。
 
-## API 接口
+## API 文档
 
-所有请求通过 `?api=<name>` 访问：
+所有请求通过查询参数 `?api=<name>` 路由：
 
-| API | 功能 | 关键参数 |
-|---|---|---|
-| `search` | 搜索 | `query=关键词` |
-| `item_info` | 章节详情 | `item_ids=ID` |
-| `content` | 章节内容 | `item_ids=ID` |
-| `book` | 书籍目录 (fanqie web) | `book_id=ID` |
-| `book_share` | 分享/摘录 | `book_id=ID` |
-| `directory` | 小说目录 | `book_id=ID` |
-| `full` | 多章节批量 | `book_id=ID&item_ids=ID1,ID2,...` |
-| `toutiao` | 头条小说 | `item_ids=ID` |
-| `toutiao_article` | 头条文章 | `item_ids=ID&password=...` |
-| `wkcontent` | 听书时间轴 | `item_ids=ID` |
-| `video` | 短剧视频 | `item_ids=ID` (加 `&mode=urls` 拿播放地址) |
-| `manga` | 漫画 | `item_ids=ID` (加 `&decode=1` 服务端解密) |
-| `player` | HTML 播放器 | `item_id=ID` |
-| `stats_detail` | 健康检查 | `password=...` |
-| `device_pool` | 设备池 | `password=...` |
+```
+https://你的worker域名/?api=search&query=斗破苍穹
+```
 
-调试签名：`GET /sign?q=aid=1967&device_id=abc`
+### 端点列表
 
-## Free 计划限制
+| API | 功能 | 参数 | 示例 |
+|---|---|---|---|
+| `search` | 搜索 | `query` | `?api=search&query=hello` |
+| `item_info` | 书籍/章节详情 | `item_ids` | `?api=item_info&item_ids=123` |
+| `content` | 章节正文 | `item_ids` | `?api=content&item_ids=123` |
+| `book` | 书籍目录 | `book_id` | `?api=book&book_id=123` |
+| `book_share` | 分享/摘录 | `book_id` | `?api=book_share&book_id=123` |
+| `directory` | 小说目录 | `book_id` | `?api=directory&book_id=123` |
+| `full` | 多章节批量获取 | `book_id`, `item_ids` | `?api=full&book_id=123&item_ids=1,2,3` |
+| `toutiao` | 头条小说 | `item_ids` | `?api=toutiao&item_ids=123` |
+| `toutiao_article` | 头条文章 | `item_ids`, `password` | `?api=toutiao_article&item_ids=123&password=xxx` |
+| `wkcontent` | 听书时间轴 | `item_ids` | `?api=wkcontent&item_ids=123` |
+| `video` | 短剧视频 | `item_ids` | `?api=video&item_ids=123&mode=urls` |
+| `manga` | 漫画 | `item_ids` | `?api=manga&item_ids=123&decode=1` |
+| `player` | HTML 播放器 | `item_id` | `?api=player&item_id=123` |
+| `stats_detail` | 运行状态 | `password` | `?api=stats_detail&password=xxx` |
+| `device_pool` | 设备池状态 | `password` | `?api=device_pool&password=xxx` |
 
-部署在 Workers Free 计划上的注意事项：
+### 特殊参数说明
 
-| 资源 | 限额 | 本项目消耗 |
-|---|---|---|
-| 请求 | 100K/天 | cron 144 + 用户请求 |
-| CPU | 10ms/次 | 常规 ~5-7ms，`full` 端点 ~8-12ms |
-| D1 写 | 100K/天 | ~1.1 次/请求（采样 stats） |
+- `video`：默认返回文本内容；加 `&mode=urls` 返回视频播放地址
+- `manga`：默认返回图片 URL + 解密 key；加 `&decode=1` 由服务端解密返回图片数据
+- `full`：支持 GET 和 POST（POST body 为 JSON `{"book_id":"...","item_ids":["..."]}`）
+- `search`：加 `&search_type=fanqie` 走 fanqienovel.com 搜索
 
-已内置防护：80K/isolate 限流、stats 10% 采样、cron 每 10 分钟。
+### 调试
+
+```
+GET /sign?q=aid=1967&device_id=abc
+```
+
+返回该查询字符串对应的全部签名头（x-gorgon、x-argus、x-ladon 等）。
 
 ## 本地开发
 
 ```bash
-npm run dev              # wrangler dev (http://localhost:8787)
-npm test                 # 54 个 oracle 测试
-npm run typecheck        # tsc --noEmit
-npm run db:migrate:local # 本地 D1 建表
+# 本地 D1 建表
+npm run db:migrate:local
+
+# 启动开发服务器
+npm run dev
+# 访问 http://localhost:8787
+
+# 运行测试
+npm test
+
+# 类型检查
+npm run typecheck
 ```
+
+本地开发时 cron 不会自动触发。使用 `--test-scheduled` 标志启动后，访问 `http://localhost:8787/__scheduled` 可手动触发设备注册。
+
+## 项目结构
+
+```
+src/
+├── index.ts              Worker 入口（路由 + cron）
+├── signature.ts          签名头组装
+├── stats.ts              调用统计（D1）
+├── crypto/               加密模块
+│   ├── argus.ts          X-Argus（Simon + AES-128-CBC）
+│   ├── simon.ts          Simon128/256 分组密码
+│   ├── ladon.ts          X-Ladon（BigInt 运算）
+│   ├── xgorgon.ts        X-Gorgon 0404/8404
+│   ├── sm3.ts            SM3 国密哈希
+│   ├── md5.ts            MD5
+│   ├── protobuf.ts       Protobuf wire format
+│   ├── cm.ts             2048-bit DH 握手
+│   ├── abogus.ts         ABogus（RC4 + SM3）
+│   ├── image_decrypt.ts  AES-256-GCM 图片解密
+│   └── spade.ts          视频 URL 解密
+├── device/               设备管理
+│   ├── pool.ts           D1 设备池
+│   ├── register.ts       设备注册全流程
+│   ├── tt_crypto.ts      ttEncrypt / key 解密
+│   └── util.ts           工具函数
+└── endpoints/            业务端点
+    ├── base.ts           公共 helper
+    └── *.ts              各端点实现
+
+migrations/
+└── 0001_init.sql         D1 表结构
+
+test/
+└── *.test.ts             Oracle 对拍测试（54 项）
+```
+
+## Workers Free 计划说明
+
+| 资源 | 每日限额 | 本项目消耗 |
+|---|---|---|
+| 请求数 | 100,000 | cron 144 + 用户请求 |
+| CPU 时间 | 10ms/次调用 | 常规端点 ~5-7ms |
+| D1 行读取 | 5,000,000 | ~1-2 次/请求 |
+| D1 行写入 | 100,000 | ~1.1 次/请求 |
+
+内置防护措施：
+- 请求限流：单 isolate 80K/天后返回 429
+- Stats 采样：10% 概率写入，节省 90% D1 写配额
+- Cron 频率：每 10 分钟（非每分钟）
+
+个人使用完全够用。如果日请求量超过 5 万，建议升级 Workers Paid（$5/月）。
+
+## License
+
+MIT
