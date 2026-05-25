@@ -6,9 +6,10 @@ export interface EdgeOneKV {
   put(key: string, value: unknown, options?: { expirationTtl?: number; expiration?: number }): Promise<void>;
   delete(key: string): Promise<boolean>;
   list(options?: { limit?: number; prefix?: string; cursor?: string }): Promise<{
-    keys: Array<{ name: string; expiration?: number }>;
-    list_complete: boolean;
-    cursor?: string;
+    keys?: Array<{ key?: string; name?: string; expiration?: number }>;
+    complete?: boolean;
+    list_complete?: boolean;
+    cursor?: string | null;
   }>;
 }
 
@@ -54,9 +55,16 @@ async function listAllKeys(kv: EdgeOneKV, prefix: string): Promise<string[]> {
   const names: string[] = [];
   let cursor: string | undefined;
   do {
-    const page = await kv.list({ prefix, limit: 1000, cursor });
-    for (const key of page.keys) names.push(key.name);
-    cursor = page.list_complete ? undefined : page.cursor;
+    const options: { limit: number; prefix: string; cursor?: string } = { prefix, limit: 256 };
+    if (cursor) options.cursor = cursor;
+    const page = await kv.list(options);
+    const keys = Array.isArray(page.keys) ? page.keys : [];
+    for (const key of keys) {
+      const name = key.key ?? key.name;
+      if (name) names.push(name);
+    }
+    const complete = page.complete ?? page.list_complete ?? true;
+    cursor = complete ? undefined : (page.cursor ?? undefined);
   } while (cursor);
   return names;
 }
@@ -231,4 +239,13 @@ export class EdgeOneKVStats implements StatsStore {
     if (mode === 'insert-if-missing' && await this.kv.get(kvKey) != null) return;
     await this.kv.put(kvKey, String(value));
   }
+}
+
+export async function probeKV(kv: EdgeOneKV): Promise<unknown> {
+  const key = `probe:${Date.now()}`;
+  const value = String(Math.floor(Math.random() * 1_000_000));
+  await kv.put(key, value);
+  const readBack = await kv.get(key);
+  await kv.delete(key);
+  return { key, value, readBack };
 }

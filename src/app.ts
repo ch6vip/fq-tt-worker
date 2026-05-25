@@ -38,6 +38,7 @@ export interface AppRuntime {
   pool: DevicePoolStore;
   stats: StatsStore;
   waitUntil: WaitUntilContext;
+  probeKV?: () => Promise<unknown>;
 }
 
 function hexBytes(hex: string): Uint8Array {
@@ -165,6 +166,13 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
 
   if (api === 'device_pool') {
     return jsonResponse({ success: true, data: await runtime.pool.groupStats() });
+  }
+
+  if (api === 'kv_probe') {
+    if (!isAuthorized(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
+    const probe = runtime.probeKV;
+    if (!probe) return jsonResponse({ success: false, error: 'kv_probe is not available in this runtime' }, 501);
+    return jsonResponse({ success: true, data: await probe() });
   }
 
   if (api === 'admin_refill') {

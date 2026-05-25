@@ -5,7 +5,7 @@
 //   edge-functions/[[default]].js
 
 import { handleAppRequest, type RuntimeEnv } from './app.js';
-import { EdgeOneKVDevicePool, EdgeOneKVStats, type EdgeOneKV } from './edgeone_kv.js';
+import { EdgeOneKVDevicePool, EdgeOneKVStats, probeKV, type EdgeOneKV } from './edgeone_kv.js';
 
 interface EdgeOneEnv extends Partial<RuntimeEnv> {
   FQTT_KV?: EdgeOneKV;
@@ -82,6 +82,7 @@ export async function onRequest(context: EdgeOneContext): Promise<Response> {
       pool: new EdgeOneKVDevicePool(runtimeEnv.FQTT_KV),
       stats: new EdgeOneKVStats(runtimeEnv.FQTT_KV),
       waitUntil: waitUntilAdapter,
+      probeKV: () => probeKV(runtimeEnv.FQTT_KV),
     });
     await waitUntil.drain();
     return response;
