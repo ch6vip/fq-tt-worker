@@ -1,0 +1,33 @@
+name = "fq-tt-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 binding — run `npm run db:create` first to get the database_id,
+# then paste it below.
+[[d1_databases]]
+binding = "DB"
+database_name = "fq-tt-pool"
+database_id = "<PASTE_AFTER_db:create>"
+migrations_dir = "migrations"
+
+# Cron: refill device pool every 2 minutes.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Plain config (non-secret). Real values land here.
+[vars]
+AID = "1967"
+LICENSE_ID = "1611921764"
+SDK_VERSION = "v04.04.05-ov-android"
+SDK_VERSION_INT = "134744640"
+PLATFORM = "0"
+USER_AGENT = "com.dragon.read/66732 (Linux; U; Android 10; zh_CN; Pixel 4 XL; Build/QD1A.190821.007;tt-ok/3.12.13.4-tiktok)"
+GORGON_ALGORITHM = "8404"
+MIN_POOL_SIZE = "10"
+
+# Secrets (set via `wrangler secret put NAME`):
+#   ARGUS_SIGN_KEY   — 32-byte hex, Simon key
+#   ARGUS_AES_KEY    — 16-byte hex, AES-128-CBC key
+#   ARGUS_AES_IV     — 16-byte hex, AES-128-CBC iv
+#   AUTH_PASSWORD    — gate for /stats_detail etc.
