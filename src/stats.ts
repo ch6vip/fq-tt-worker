@@ -1,4 +1,6 @@
-export class StatsManager {
+import type { StatsStore } from './platform.js';
+
+export class StatsManager implements StatsStore {
   constructor(private db: D1Database) {}
 
   async record(api: string): Promise<void> {
@@ -50,5 +52,24 @@ export class StatsManager {
       `DELETE FROM api_stats_hourly WHERE hour_bucket < ?`
     ).bind(cutoff).run();
     return r.meta.changes ?? 0;
+  }
+
+  async getMeta(key: string): Promise<number | null> {
+    const row = await this.db.prepare(
+      `SELECT value FROM meta WHERE key = ?`
+    ).bind(key).first<{ value: number | null }>();
+    return row?.value ?? null;
+  }
+
+  async setMeta(key: string, value: number, mode: 'upsert' | 'insert-if-missing' = 'upsert'): Promise<void> {
+    if (mode === 'insert-if-missing') {
+      await this.db.prepare(
+        `INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING`
+      ).bind(key, value).run();
+      return;
+    }
+    await this.db.prepare(
+      `INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+    ).bind(key, value).run();
   }
 }

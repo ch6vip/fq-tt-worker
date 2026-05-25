@@ -3,7 +3,8 @@
 // decrypt, processContent. Each endpoint module imports what it needs.
 
 import { signRequest, type SignatureOptions } from '../signature.js';
-import { DevicePoolManager, type Device } from '../device/pool.js';
+import type { Device } from '../device/pool.js';
+import type { DevicePoolStore, WaitUntilContext } from '../platform.js';
 
 const DEFAULT_USER_AGENT =
   'com.dragon.read/66732 (Linux; U; Android 10; zh_CN; Pixel 4 XL; ' +
@@ -15,8 +16,8 @@ const SIGNATURE_HEADER_KEYS = new Set([
 
 export interface EndpointContext {
   sigOpts: SignatureOptions;
-  pool: DevicePoolManager;
-  ctx: ExecutionContext;
+  pool: DevicePoolStore;
+  ctx: WaitUntilContext;
 }
 
 export interface FetchOptions {

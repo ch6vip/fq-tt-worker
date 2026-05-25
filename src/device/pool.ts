@@ -9,13 +9,15 @@
 //     seconds. Here cron handles refill; the request path never registers.
 //   - PHP wrote last_used as a 'Y-m-d H:i:s' string; we use Date.now() ms.
 
+import type { DeviceGroupStats, DevicePoolStore } from '../platform.js';
+
 export interface Device {
   device_id: string;
   install_id: string;
   secret_key: string;
 }
 
-export class DevicePoolManager {
+export class DevicePoolManager implements DevicePoolStore {
   constructor(private db: D1Database) {}
 
   /**
@@ -106,6 +108,14 @@ export class DevicePoolManager {
          OR (last_used > 0 AND last_used < ?)
     `).bind(cutoff).run();
     return r.meta.changes ?? 0;
+  }
+
+  async groupStats(): Promise<DeviceGroupStats[]> {
+    const { results } = await this.db.prepare(`
+      SELECT status, COUNT(*) as count, MIN(created_at) as oldest, MAX(created_at) as newest
+      FROM devices GROUP BY status
+    `).all<DeviceGroupStats>();
+    return results;
   }
 }
 

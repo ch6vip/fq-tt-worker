@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build:edgeone": "esbuild src/edgeone.ts --bundle --format=esm --target=es2022 --outfile=dist-edgeone/edge-functions/index.js && node scripts/prepare-edgeone.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
+    "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",
     "wrangler": "^3.90.0"

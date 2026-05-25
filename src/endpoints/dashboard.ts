@@ -1,36 +1,24 @@
-import type { Env } from '../index.js';
-import { StatsManager } from '../stats.js';
-import { DevicePoolManager } from '../device/pool.js';
-
-interface DeviceGroupStats {
-  status: string;
-  count: number;
-  oldest: number;
-  newest: number;
-}
+import type { DevicePoolStore, StatsStore } from '../platform.js';
 
 export async function handleDashboard(
-  env: Env, stats: StatsManager, pool: DevicePoolManager
+  stats: StatsStore, pool: DevicePoolStore
 ): Promise<Response> {
-  const [totalCalls, todayCalls, readyCount, deviceGroups, cronMetaRow, firstRunRow] = await Promise.all([
+  const [totalCalls, todayCalls, readyCount, deviceGroups, lastCronRun, firstRun] = await Promise.all([
     stats.totalCalls(),
     stats.todayCalls(),
     pool.countReady(),
-    env.DB.prepare(`
-      SELECT status, COUNT(*) as count, MIN(created_at) as oldest, MAX(created_at) as newest
-      FROM devices GROUP BY status
-    `).all<DeviceGroupStats>(),
-    env.DB.prepare(`SELECT value FROM meta WHERE key='last_cron_run'`).first<{ value: number | null }>(),
-    env.DB.prepare(`SELECT value FROM meta WHERE key='first_run'`).first<{ value: number | null }>(),
+    pool.groupStats(),
+    stats.getMeta('last_cron_run'),
+    stats.getMeta('first_run'),
   ]);
 
   const dashboardData = JSON.stringify({
     totalCalls,
     todayCalls,
     readyCount,
-    deviceGroups: deviceGroups.results,
-    lastCronRun: cronMetaRow?.value ?? null,
-    firstRun: firstRunRow?.value ?? null,
+    deviceGroups,
+    lastCronRun,
+    firstRun,
     ts: Date.now(),
   });
 

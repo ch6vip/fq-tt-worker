@@ -3,6 +3,8 @@ node_modules/
 .dev.vars
 .dev.vars.*
 dist/
+dist-edgeone/
+fq-tt-worker-edgeone.zip
 *.log
 .DS_Store
 
