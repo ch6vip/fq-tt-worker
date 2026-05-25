@@ -15,7 +15,7 @@
 //     → base64
 
 import { sm3 } from './sm3.js';
-import { simonEnc } from './simon.js';
+import { expandKey, simonEncWithSchedule } from './simon.js';
 import { encodeProto, type ProtoValue } from './protobuf.js';
 
 function hexToBytes(hex: string): Uint8Array {
@@ -25,9 +25,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 function bytesToBase64(b: Uint8Array): string {
-  let s = '';
-  for (const x of b) s += String.fromCharCode(x);
-  return btoa(s);
+  return btoa(String.fromCharCode.apply(null, b as unknown as number[]));
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -113,19 +111,20 @@ export async function encryptArgus(
   // 1) protobuf + PKCS7 pad
   const padded = pkcs7Pad(encodeProto(xargusBean), 16);
 
-  // 2) split signKey into 4 × u64 (LE) → Simon key words
+  // 2) expand Simon key schedule once (saves N-1 redundant expansions)
   const keyWords: [bigint, bigint, bigint, bigint] = [
     readU64LE(k.signKey, 0),
     readU64LE(k.signKey, 8),
     readU64LE(k.signKey, 16),
     readU64LE(k.signKey, 24),
   ];
+  const schedule = expandKey(keyWords);
 
   // 3) per-16B-block Simon encrypt
   const encPb = new Uint8Array(padded.length);
   for (let i = 0; i < padded.length; i += 16) {
     const pt: [bigint, bigint] = [readU64LE(padded, i), readU64LE(padded, i + 8)];
-    const [c0, c1] = simonEnc(pt, keyWords);
+    const [c0, c1] = simonEncWithSchedule(pt, schedule);
     writeU64LE(encPb, i, c0);
     writeU64LE(encPb, i + 8, c1);
   }

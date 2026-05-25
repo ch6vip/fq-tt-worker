@@ -18,7 +18,7 @@ function rotr64(v: bigint, n: number): bigint {
   return ((v >> b) | ((v << BigInt(64 - n)) & MASK64)) & MASK64;
 }
 
-function expandKey(k: readonly [bigint, bigint, bigint, bigint]): bigint[] {
+export function expandKey(k: readonly [bigint, bigint, bigint, bigint]): bigint[] {
   const key = [k[0] & MASK64, k[1] & MASK64, k[2] & MASK64, k[3] & MASK64];
   for (let i = 4; i < 72; i++) {
     let tmp = rotr64(key[i - 1]!, 3);
@@ -31,12 +31,11 @@ function expandKey(k: readonly [bigint, bigint, bigint, bigint]): bigint[] {
   return key;
 }
 
-export function simonEnc(
+export function simonEncWithSchedule(
   pt: readonly [bigint, bigint],
-  k: readonly [bigint, bigint, bigint, bigint],
+  schedule: bigint[],
   c: 0 | 1 = 0,
 ): [bigint, bigint] {
-  const key = expandKey(k);
   let xi = pt[0] & MASK64;
   let xi1 = pt[1] & MASK64;
   for (let i = 0; i < 72; i++) {
@@ -44,27 +43,17 @@ export function simonEnc(
     const f = c === 1
       ? rotl64(xi1, 1)
       : (rotl64(xi1, 1) & rotl64(xi1, 8)) & MASK64;
-    xi1 = (xi ^ f ^ rotl64(xi1, 2) ^ key[i]!) & MASK64;
+    xi1 = (xi ^ f ^ rotl64(xi1, 2) ^ schedule[i]!) & MASK64;
     xi = tmp;
   }
   return [xi, xi1];
 }
 
-export function simonDec(
-  ct: readonly [bigint, bigint],
+export function simonEnc(
+  pt: readonly [bigint, bigint],
   k: readonly [bigint, bigint, bigint, bigint],
   c: 0 | 1 = 0,
 ): [bigint, bigint] {
-  const key = expandKey(k);
-  let xi = ct[0] & MASK64;
-  let xi1 = ct[1] & MASK64;
-  for (let i = 71; i >= 0; i--) {
-    const tmp = xi;
-    const f = c === 1
-      ? rotl64(xi, 1)
-      : (rotl64(xi, 1) & rotl64(xi, 8)) & MASK64;
-    xi = (xi1 ^ f ^ rotl64(xi, 2) ^ key[i]!) & MASK64;
-    xi1 = tmp;
-  }
-  return [xi, xi1];
+  return simonEncWithSchedule(pt, expandKey(k), c);
 }
+

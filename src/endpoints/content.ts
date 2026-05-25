@@ -188,25 +188,26 @@ async function processChapterResponse(
 
 // HTML cleanup. Mirrors BaseEndpoint::processContent + ExactContentEndpoint's
 // stricter variant (drops <div>, <header>...</header> etc).
+const CONTENT_STRIP_PATTERNS: RegExp[] = [
+  /<p class="pictureDesc" group-id="\d+" idx="\d+">/g,
+  /<\/body>|<\/html>|<\/div>/g,
+  /<div[^>]*>/g,
+  /<p class="picture" group-id="\d+">/g,
+  /<div data-fanqie-type="image" source="user">/g,
+  /<head>.*<\/h1>/gs,
+  /<!DOCTYPE.*<html>/gs,
+  /<\?xml.*\?>/gs,
+  /<p idx="\d+">/g,
+  /<header>.*<\/header>/gs,
+  /<article>|<\/article>/g,
+  /<footer>|<\/footer>/g,
+  /<tt_keyword.*keyword_ad>/g,
+  /<p>/g,
+];
+
 function processContent(content: string): string {
-  const patterns: RegExp[] = [
-    /<p class="pictureDesc" group-id="\d+" idx="\d+">/g,
-    /<\/body>|<\/html>|<\/div>/g,
-    /<div[^>]*>/g,
-    /<p class="picture" group-id="\d+">/g,
-    /<div data-fanqie-type="image" source="user">/g,
-    /<head>.*<\/h1>/gs,
-    /<!DOCTYPE.*<html>/gs,
-    /<\?xml.*\?>/gs,
-    /<p idx="\d+">/g,
-    /<header>.*<\/header>/gs,
-    /<article>|<\/article>/g,
-    /<footer>|<\/footer>/g,
-    /<tt_keyword.*keyword_ad>/g,
-    /<p>/g,
-  ];
   let out = content;
-  for (const p of patterns) out = out.replace(p, '');
+  for (const p of CONTENT_STRIP_PATTERNS) { p.lastIndex = 0; out = out.replace(p, ''); }
   out = out.replace(/&amp;x/g, '&x');
   out = out.replace(/<\/p>/g, '\n');
   return out.trim();

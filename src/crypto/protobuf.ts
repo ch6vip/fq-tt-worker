@@ -19,16 +19,31 @@ export type ProtoValue =
   | { [key: number]: ProtoValue };
 
 export class ProtoWriter {
-  private parts: Uint8Array[] = [];
-  private size = 0;
+  private buf: Uint8Array;
+  private pos = 0;
+
+  constructor(initialSize = 256) {
+    this.buf = new Uint8Array(initialSize);
+  }
+
+  private grow(needed: number): void {
+    if (this.pos + needed <= this.buf.length) return;
+    let newSize = this.buf.length * 2;
+    while (newSize < this.pos + needed) newSize *= 2;
+    const next = new Uint8Array(newSize);
+    next.set(this.buf.subarray(0, this.pos));
+    this.buf = next;
+  }
 
   write(b: Uint8Array): void {
-    this.parts.push(b);
-    this.size += b.length;
+    this.grow(b.length);
+    this.buf.set(b, this.pos);
+    this.pos += b.length;
   }
 
   writeByte(b: number): void {
-    this.write(new Uint8Array([b & 0xff]));
+    this.grow(1);
+    this.buf[this.pos++] = b & 0xff;
   }
 
   writeVarint(v: number): void {
@@ -41,15 +56,17 @@ export class ProtoWriter {
   }
 
   writeInt32(v: number): void {
-    const b = new Uint8Array(4);
-    new DataView(b.buffer).setUint32(0, v >>> 0, true);
-    this.write(b);
+    this.grow(4);
+    const dv = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 4);
+    dv.setUint32(0, v >>> 0, true);
+    this.pos += 4;
   }
 
   writeInt64(v: bigint): void {
-    const b = new Uint8Array(8);
-    new DataView(b.buffer).setBigUint64(0, BigInt.asUintN(64, v), true);
-    this.write(b);
+    this.grow(8);
+    const dv = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8);
+    dv.setBigUint64(0, BigInt.asUintN(64, v), true);
+    this.pos += 8;
   }
 
   writeString(b: Uint8Array): void {
@@ -58,13 +75,7 @@ export class ProtoWriter {
   }
 
   toBytes(): Uint8Array {
-    const out = new Uint8Array(this.size);
-    let off = 0;
-    for (const p of this.parts) {
-      out.set(p, off);
-      off += p.length;
-    }
-    return out;
+    return this.buf.slice(0, this.pos);
   }
 }
 

@@ -13,6 +13,9 @@
 
 import { sm3 } from '../crypto/sm3.js';
 
+// Precomputed: sm3(sm3('cus')) — constant used in every ABogus call.
+const CUS_HASH = sm3(sm3('cus'));
+
 // Custom alphabets used by ABogus resultEncrypt (PHP `tables`).
 const TABLES: Record<string, string> = {
   s0: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
@@ -112,7 +115,7 @@ function generateRc4BbStr(
   const startTime = Date.now();
 
   const urlHash = sm3(sm3(urlSearchParams + suffix));   // 32 bytes
-  const cusHash = sm3(sm3(suffix));                      // 32 bytes
+  const cusHash = suffix === 'cus' ? CUS_HASH : sm3(sm3(suffix));
 
   // UA encryption key = single byte: int(0.00390625) → 0
   const uaKey = new Uint8Array([0]);

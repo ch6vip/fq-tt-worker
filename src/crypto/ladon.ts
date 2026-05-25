@@ -84,9 +84,7 @@ function encryptLadon(md5hex: string, data: Uint8Array): Uint8Array {
 }
 
 function bytesToBase64(b: Uint8Array): string {
-  let s = '';
-  for (const x of b) s += String.fromCharCode(x);
-  return btoa(s);
+  return btoa(String.fromCharCode.apply(null, b as unknown as number[]));
 }
 
 /**

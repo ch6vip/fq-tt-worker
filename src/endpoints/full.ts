@@ -10,7 +10,7 @@ import {
   serverError,
   type EndpointContext,
 } from './base.js';
-import { CM } from '../crypto/cm.js';
+import { getCM, refillCMPool } from '../crypto/cm.js';
 import type { Device } from '../device/pool.js';
 
 interface FullResponse {
@@ -38,29 +38,29 @@ function buildUrl(device: Device): string {
   );
 }
 
+const FULL_STRIP_PATTERNS: RegExp[] = [
+  /<p class="pictureDesc" group-id="\d+" idx="\d+">/g,
+  /<\/body>|<\/html>|<\/div>/g,
+  /<p class="picture" group-id="\d+">/g,
+  /<div data-fanqie-type="image" source="user">/g,
+  /<head>.*<\/h1>/gs,
+  /<!DOCTYPE.*<html>/gs,
+  /<\?xml.*\?>/gs,
+  /<p idx="\d+">/g,
+  /<header>|<\/header>/g,
+  /<article>|<\/article>/g,
+  /<footer>|<\/footer>/g,
+  /<tt_keyword.*keyword_ad>/g,
+  /<p>/g,
+];
+
 function processFullContent(content: string): string {
   let s = content;
   s = s.replace(/<\s*br\s*\/?>/gi, '\n');
   s = s.replace(/<\s*p[^>]*>/gi, '\n');
   s = s.replace(/<\s*\/p\s*>/gi, '\n');
-  // strip_tags equivalent
   s = s.replace(/<[^>]+>/g, '');
-  const patterns: RegExp[] = [
-    /<p class="pictureDesc" group-id="\d+" idx="\d+">/g,
-    /<\/body>|<\/html>|<\/div>/g,
-    /<p class="picture" group-id="\d+">/g,
-    /<div data-fanqie-type="image" source="user">/g,
-    /<head>.*<\/h1>/gs,
-    /<!DOCTYPE.*<html>/gs,
-    /<\?xml.*\?>/gs,
-    /<p idx="\d+">/g,
-    /<header>|<\/header>/g,
-    /<article>|<\/article>/g,
-    /<footer>|<\/footer>/g,
-    /<tt_keyword.*keyword_ad>/g,
-    /<p>/g,
-  ];
-  for (const p of patterns) s = s.replace(p, '');
+  for (const p of FULL_STRIP_PATTERNS) { p.lastIndex = 0; s = s.replace(p, ''); }
   s = s.replace(/&amp;x/g, '&x');
   s = s.replace(/\n{2,}/g, '\n');
   return s.trim();
@@ -102,8 +102,11 @@ export async function handleFull(req: Request, ctx: EndpointContext): Promise<Re
   if (itemIds.length > 300) return badRequest('单次请求章节数量不能超过300个');
 
   try {
+    // Refill CM keypair pool in background for next request.
+    ctx.ctx.waitUntil(Promise.resolve().then(refillCMPool));
+
     const chapters = await withDeviceRetry(ctx, async (device) => {
-      const cm = new CM();
+      const cm = getCM();
       const handshakeKey = await cm.clientHandshake();
       const postBody = JSON.stringify({ book_id: bookId, item_ids: itemIds, key: handshakeKey });
       const url = buildUrl(device);

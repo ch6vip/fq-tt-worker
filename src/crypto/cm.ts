@@ -26,9 +26,7 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 function bytesToBase64(b: Uint8Array): string {
-  let s = '';
-  for (const x of b) s += String.fromCharCode(x);
-  return btoa(s);
+  return btoa(String.fromCharCode.apply(null, b as unknown as number[]));
 }
 
 function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
@@ -77,22 +75,21 @@ export class CM {
   private privateKey: bigint;
   private publicKey: bigint;
 
-  /**
-   * Construct a CM handshake.
-   *
-   * @param injectedPrivateKey  Optional deterministic private key for testing.
-   *                            Production callers should omit it so a fresh
-   *                            random key is generated per request.
-   */
   constructor(injectedPrivateKey?: bigint) {
     if (injectedPrivateKey !== undefined) {
       this.privateKey = injectedPrivateKey % (CM_PRIME - 2n);
     } else {
-      // privateKey = random_256_bits mod (prime - 2)
       const priv = bytesToBigInt(crypto.getRandomValues(new Uint8Array(32)));
       this.privateKey = priv % (CM_PRIME - 2n);
     }
     this.publicKey = modPow(CM_BASE, this.privateKey, CM_PRIME);
+  }
+
+  static fromPrecomputed(privateKey: bigint, publicKey: bigint): CM {
+    const cm = Object.create(CM.prototype) as CM;
+    cm.privateKey = privateKey;
+    cm.publicKey = publicKey;
+    return cm;
   }
 
   /** Build the `key` field of the handshake JSON: base64(iv || AES-CBC(pub, aesKey, iv)). */
@@ -139,4 +136,29 @@ function bytesToBigInt(b: Uint8Array): bigint {
   let n = 0n;
   for (const x of b) n = (n << 8n) | BigInt(x);
   return n;
+}
+
+// --- Keypair pool: pre-generate CM instances to avoid constructor modPow on the request path ---
+
+interface CMKeypair { privateKey: bigint; publicKey: bigint; }
+
+const POOL_TARGET = 4;
+const keypairPool: CMKeypair[] = [];
+
+function generateKeypair(): CMKeypair {
+  const priv = bytesToBigInt(crypto.getRandomValues(new Uint8Array(32))) % (CM_PRIME - 2n);
+  const pub = modPow(CM_BASE, priv, CM_PRIME);
+  return { privateKey: priv, publicKey: pub };
+}
+
+export function getCM(): CM {
+  const kp = keypairPool.pop();
+  if (kp) return CM.fromPrecomputed(kp.privateKey, kp.publicKey);
+  return new CM();
+}
+
+export function refillCMPool(): void {
+  while (keypairPool.length < POOL_TARGET) {
+    keypairPool.push(generateKeypair());
+  }
 }

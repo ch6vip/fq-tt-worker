@@ -42,9 +42,7 @@ interface RegisterKeyResponse {
 }
 
 function bytesToBase64(b: Uint8Array): string {
-  let s = '';
-  for (const x of b) s += String.fromCharCode(x);
-  return btoa(s);
+  return btoa(String.fromCharCode.apply(null, b as unknown as number[]));
 }
 
 function bytesToHexUpper(b: Uint8Array): string {
