@@ -80,8 +80,32 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// --- Free plan guardrails ---
+// In-memory request counter per isolate. Resets when the isolate is evicted.
+// Not globally precise (multiple isolates), but prevents a single instance
+// from burning through the 100K/day request quota.
+let dailyCounter = 0;
+let counterDay = 0; // day-of-year when counter was last reset
+
+function checkRateLimit(): Response | null {
+  const now = new Date();
+  const today = now.getUTCFullYear() * 1000 + now.getUTCMonth() * 32 + now.getUTCDate();
+  if (today !== counterDay) { dailyCounter = 0; counterDay = today; }
+  dailyCounter++;
+  if (dailyCounter > 80000) {
+    return new Response(JSON.stringify({ success: false, error: 'rate limit exceeded' }), {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '3600' },
+    });
+  }
+  return null;
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const limited = checkRateLimit();
+    if (limited) return limited;
+
     const url = new URL(req.url);
     const api = url.searchParams.get('api') ?? '';
 
@@ -90,8 +114,10 @@ export default {
     const stats = new StatsManager(env.DB);
     const endpointCtx: EndpointContext = { sigOpts, pool, ctx };
 
-    // Fire-and-forget stats bump.
-    if (api) ctx.waitUntil(stats.record(api).catch(() => {}));
+    // Stats: 10% sampling to save D1 writes. Each write increments by 10.
+    if (api && Math.random() < 0.1) {
+      ctx.waitUntil(stats.recordSampled(api).catch(() => {}));
+    }
 
     if (url.pathname === '/sign' || api === 'sign') {
       const q = url.searchParams.get('q') ?? '';
@@ -109,6 +135,9 @@ export default {
     }
 
     if (api === 'device_pool') {
+      if (env.AUTH_PASSWORD && url.searchParams.get('password') !== env.AUTH_PASSWORD) {
+        return jsonResponse({ success: false, error: 'unauthorized' }, 401);
+      }
       const { results } = await env.DB.prepare(
         `SELECT device_id, status, last_used, use_count, created_at
          FROM devices ORDER BY created_at DESC`

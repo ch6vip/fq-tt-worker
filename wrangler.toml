@@ -11,9 +11,9 @@ database_name = "fq-tt-pool"
 database_id = "6cbb1db6-4142-4e9d-800e-e19229495538"
 migrations_dir = "migrations"
 
-# Cron: refill device pool every 2 minutes.
+# Cron: refill device pool every 10 minutes (Free plan: conserve request quota).
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["*/10 * * * *"]
 
 # Plain config (non-secret). Real values land here.
 [vars]
