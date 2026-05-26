@@ -1,5 +1,5 @@
 import type { Device } from './device/pool.js';
-import type { DeviceGroupStats, DevicePoolStore, StatsStore } from './platform.js';
+import type { ApiHealthSummary, DeviceGroupStats, DevicePoolStore, StatsStore } from './platform.js';
 
 export interface EdgeOneKV {
   get(key: string, options?: { type: 'text' | 'json' | 'arrayBuffer' | 'stream' } | 'json'): Promise<unknown>;
@@ -183,15 +183,15 @@ export class EdgeOneKVStats implements StatsStore {
     return `device_failure_${kvSafePart(reason).slice(0, 120)}`;
   }
 
-  async record(api: string): Promise<void> {
+  async record(api: string, count = 1): Promise<void> {
     const key = this.apiKey(api);
     const row = await getJson<ApiStat>(this.kv, key) ?? { api, call_count: 0, last_called: 0 };
-    row.call_count++;
+    row.call_count += count;
     row.last_called = Date.now();
     await putJson(this.kv, key, row);
   }
 
-  async recordHourlyHit(api: string): Promise<void> {
+  async recordHourlyHit(api: string, count = 1): Promise<void> {
     const bucket = Math.floor(Date.now() / 3600000) * 3600;
     const key = this.hourlyKey(api, bucket);
     const row = await getJson<HourlyStat>(this.kv, key) ?? {
@@ -200,8 +200,50 @@ export class EdgeOneKVStats implements StatsStore {
       success_count: 0,
       fail_count: 0,
     };
-    row.success_count++;
+    row.success_count += count;
     await putJson(this.kv, key, row);
+  }
+
+  async recordHourlyFail(api: string, count = 1): Promise<void> {
+    const bucket = Math.floor(Date.now() / 3600000) * 3600;
+    const key = this.hourlyKey(api, bucket);
+    const row = await getJson<HourlyStat>(this.kv, key) ?? {
+      api,
+      hour_bucket: bucket,
+      success_count: 0,
+      fail_count: 0,
+    };
+    row.fail_count += count;
+    await putJson(this.kv, key, row);
+  }
+
+  async apiHealthSummary(hours = 24, limit = 8): Promise<ApiHealthSummary[]> {
+    const safeHours = Math.max(1, Math.min(168, Math.floor(hours)));
+    const cutoff = Math.floor((Date.now() - safeHours * 3600 * 1000) / 3600000) * 3600;
+    const keys = await listAllKeys(this.kv, 'stats_hour_');
+    const rows = await Promise.all(keys.map(key => getJson<HourlyStat>(this.kv, key)));
+    const groups = new Map<string, { success_count: number; fail_count: number }>();
+    for (const row of rows) {
+      if (!row || row.hour_bucket < cutoff) continue;
+      const current = groups.get(row.api) ?? { success_count: 0, fail_count: 0 };
+      current.success_count += row.success_count;
+      current.fail_count += row.fail_count;
+      groups.set(row.api, current);
+    }
+    return [...groups.entries()]
+      .map(([api, counts]) => {
+        const total = counts.success_count + counts.fail_count;
+        return {
+          api,
+          success_count: counts.success_count,
+          fail_count: counts.fail_count,
+          total_count: total,
+          fail_rate: total > 0 ? counts.fail_count / total : 0,
+        };
+      })
+      .filter(row => row.total_count > 0)
+      .sort((a, b) => b.fail_count - a.fail_count || b.fail_rate - a.fail_rate || a.api.localeCompare(b.api))
+      .slice(0, Math.max(1, Math.min(50, Math.floor(limit))));
   }
 
   async snapshot(): Promise<Array<{ api: string; call_count: number; last_called: number }>> {

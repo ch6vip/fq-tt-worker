@@ -3,12 +3,13 @@ import type { DevicePoolStore, StatsStore } from '../platform.js';
 export async function handleDashboard(
   stats: StatsStore, pool: DevicePoolStore
 ): Promise<Response> {
-  const [totalCalls, todayCalls, readyCount, deviceGroups, deviceFailures, lastCronRun, firstRun] = await Promise.all([
+  const [totalCalls, todayCalls, readyCount, deviceGroups, deviceFailures, apiHealth, lastCronRun, firstRun] = await Promise.all([
     stats.totalCalls(),
     stats.todayCalls(),
     pool.countReady(),
     pool.groupStats(),
     stats.deviceFailureSummary(5),
+    stats.apiHealthSummary(24, 8),
     stats.getMeta('last_cron_run'),
     stats.getMeta('first_run'),
   ]);
@@ -19,6 +20,7 @@ export async function handleDashboard(
     readyCount,
     deviceGroups,
     deviceFailures,
+    apiHealth,
     lastCronRun,
     firstRun,
     ts: Date.now(),
@@ -144,6 +146,41 @@ function buildHtml(dataJson: string): string {
   </div>
 </div>
 
+<!-- API Health -->
+<div class="grid grid-cols-1 gap-4 sm:gap-6 mb-8">
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div class="text-sm font-medium text-gray-600">接口健康度</div>
+      <div class="text-xs text-gray-400">最近 24 小时</div>
+    </div>
+    <template x-if="(data.apiHealth || []).length === 0">
+      <div class="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-sm text-gray-500">暂无接口统计</div>
+    </template>
+    <div class="overflow-x-auto" x-show="(data.apiHealth || []).length > 0">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs text-gray-400 border-b border-gray-100">
+            <th class="py-2 pr-3 font-medium">API</th>
+            <th class="py-2 px-3 font-medium text-right">成功</th>
+            <th class="py-2 px-3 font-medium text-right">失败</th>
+            <th class="py-2 pl-3 font-medium text-right">失败率</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in (data.apiHealth || [])" :key="row.api">
+            <tr class="border-b border-gray-50 last:border-0">
+              <td class="py-2 pr-3 font-medium text-gray-700" x-text="row.api"></td>
+              <td class="py-2 px-3 text-right text-green-700" x-text="formatNum(row.success_count)"></td>
+              <td class="py-2 px-3 text-right" :class="row.fail_count > 0 ? 'text-red-600 font-semibold' : 'text-gray-400'" x-text="formatNum(row.fail_count)"></td>
+              <td class="py-2 pl-3 text-right text-gray-600" x-text="formatPercent(row.fail_rate)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <!-- Device Pool Status -->
 <div class="grid grid-cols-1 gap-4 sm:gap-6 mb-8">
   <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -196,6 +233,10 @@ function dashboard() {
     formatTime(ts) {
       if (!ts) return '—';
       return new Date(ts).toLocaleString('zh-CN');
+    },
+    formatPercent(rate) {
+      if (rate == null) return '—';
+      return (rate * 100).toFixed(rate > 0 && rate < 0.01 ? 2 : 1) + '%';
     },
     // --- Uptime helpers ---
     uptimeMs() {

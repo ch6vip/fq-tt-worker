@@ -168,6 +168,22 @@ function isCacheableRequest(req: Request, api: string): boolean {
   return (RUNTIME_CONFIG.apiCacheSeconds[api] ?? 0) > 0;
 }
 
+function recordApiOutcome(runtime: AppRuntime, api: string, status: number): void {
+  const sampled = shouldRecordStats(api);
+  if (!sampled.record) return;
+  const hourly = status >= 502 && status <= 504
+    ? runtime.stats.recordHourlyFail(api, sampled.count)
+    : status >= 200 && status < 400
+      ? runtime.stats.recordHourlyHit(api, sampled.count)
+      : Promise.resolve();
+  runtime.waitUntil.waitUntil(
+    Promise.all([
+      runtime.stats.record(api, sampled.count),
+      hourly,
+    ]).catch(() => {})
+  );
+}
+
 async function handleCachedApi(
   req: Request,
   api: string,
@@ -175,7 +191,11 @@ async function handleCachedApi(
   handler: () => Promise<Response> | Response,
 ): Promise<Response> {
   const ttl = RUNTIME_CONFIG.apiCacheSeconds[api] ?? 0;
-  if (!ttl || !isCacheableRequest(req, api)) return handler();
+  if (!ttl || !isCacheableRequest(req, api)) {
+    const response = await handler();
+    recordApiOutcome(runtime, api, response.status);
+    return response;
+  }
 
   const url = new URL(req.url);
   const cacheKey = new Request(`${url.origin}/__api_cache/${RUNTIME_CONFIG.apiCacheVersion}/${api}${url.search}`, { method: 'GET' });
@@ -184,10 +204,12 @@ async function handleCachedApi(
   if (cached) {
     const hit = new Response(cached.body, cached);
     hit.headers.set('x-api-cache', 'hit');
+    recordApiOutcome(runtime, api, hit.status);
     return hit;
   }
 
   const response = await handler();
+  recordApiOutcome(runtime, api, response.status);
   if (response.ok) {
     const cachedResponse = new Response(response.body, response);
     cachedResponse.headers.set('cache-control', `public, max-age=${ttl}`);
@@ -195,6 +217,16 @@ async function handleCachedApi(
     runtime.waitUntil.waitUntil(cache.put(cacheKey, cachedResponse.clone()));
     return cachedResponse;
   }
+  return response;
+}
+
+async function handleMeasuredApi(
+  api: string,
+  runtime: AppRuntime,
+  handler: () => Promise<Response> | Response,
+): Promise<Response> {
+  const response = await handler();
+  recordApiOutcome(runtime, api, response.status);
   return response;
 }
 
@@ -367,18 +399,6 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   const sigOpts = buildSignatureOptions(env);
   const endpointCtx: EndpointContext = { sigOpts, pool: runtime.pool, stats: runtime.stats, ctx: runtime.waitUntil };
 
-  if (api && api !== 'dashboard' && api !== 'stats_detail' && api !== 'sign' && api !== 'admin_refill') {
-    const sampled = shouldRecordStats(api);
-    if (sampled.record) {
-      runtime.waitUntil.waitUntil(
-        Promise.all([
-          runtime.stats.record(api, sampled.count),
-          runtime.stats.recordHourlyHit(api, sampled.count),
-        ]).catch(() => {})
-      );
-    }
-  }
-
   if (url.pathname === '/sign' || api === 'sign') {
     if (env.DEBUG_SIGN !== '1') {
       return jsonResponse({ success: false, error: 'sign debug endpoint disabled' }, 404);
@@ -394,12 +414,16 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
 
   if (api === 'stats_detail') {
     if (!isProtectedEndpointAllowed(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-    const [ready, counters, failures] = await Promise.all([
+    const [ready, counters, failures, apiHealth] = await Promise.all([
       runtime.pool.countReady(),
       runtime.stats.snapshot(),
       runtime.stats.deviceFailureSummary(5),
+      runtime.stats.apiHealthSummary(24, 8),
     ]);
-    return jsonResponse({ success: true, data: { ready_devices: ready, ts: Date.now(), counters, device_failures: failures } });
+    return jsonResponse({
+      success: true,
+      data: { ready_devices: ready, ts: Date.now(), counters, device_failures: failures, api_health_24h: apiHealth },
+    });
   }
 
   if (api === 'device_pool') {
@@ -447,7 +471,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   }
 
   if (api === 'item_info') return handleCachedApi(req, api, runtime, () => handleItemInfo(req, endpointCtx));
-  if (api === 'player') return handlePlayer(req);
+  if (api === 'player') return handleMeasuredApi(api, runtime, () => handlePlayer(req));
   if (api === 'search') return handleCachedApi(req, api, runtime, () => handleSearch(req, endpointCtx));
   if (api === 'directory') return handleCachedApi(req, api, runtime, () => handleDirectory(req, endpointCtx));
   if (api === 'book_share') return handleCachedApi(req, api, runtime, () => handleBookShare(req, endpointCtx));
@@ -455,7 +479,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   if (api === 'comment_page') return handleCachedApi(req, api, runtime, () => handleCommentPage(req, endpointCtx));
   if (api === 'content') return handleCachedApi(req, api, runtime, () => handleContent(req, endpointCtx));
   if (api === 'wkcontent') return handleCachedApi(req, api, runtime, () => handleWkcontent(req, endpointCtx));
-  if (api === 'toutiao_article') return handleToutiaoArticle(req);
+  if (api === 'toutiao_article') return handleMeasuredApi(api, runtime, () => handleToutiaoArticle(req));
   if (api === 'toutiao') return handleCachedApi(req, api, runtime, () => handleToutiao(req, endpointCtx));
   if (api === 'full') return handleCachedApi(req, api, runtime, () => handleFull(req, endpointCtx));
   if (api === 'video') return handleCachedApi(req, api, runtime, () => handleVideo(req, endpointCtx));

@@ -1,4 +1,4 @@
-import type { StatsStore } from './platform.js';
+import type { ApiHealthSummary, StatsStore } from './platform.js';
 
 export class StatsManager implements StatsStore {
   constructor(private db: D1Database) {}
@@ -20,6 +20,46 @@ export class StatsManager implements StatsStore {
       ON CONFLICT(api, hour_bucket) DO UPDATE
         SET success_count = success_count + ?3
     `).bind(api, bucket, count).run();
+  }
+
+  async recordHourlyFail(api: string, count = 1): Promise<void> {
+    const bucket = Math.floor(Date.now() / 3600000) * 3600;
+    await this.db.prepare(`
+      INSERT INTO api_stats_hourly (api, hour_bucket, success_count, fail_count)
+      VALUES (?1, ?2, 0, ?3)
+      ON CONFLICT(api, hour_bucket) DO UPDATE
+        SET fail_count = fail_count + ?3
+    `).bind(api, bucket, count).run();
+  }
+
+  async apiHealthSummary(hours = 24, limit = 8): Promise<ApiHealthSummary[]> {
+    const safeHours = Math.max(1, Math.min(168, Math.floor(hours)));
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+    const cutoff = Math.floor((Date.now() - safeHours * 3600 * 1000) / 3600000) * 3600;
+    const { results } = await this.db.prepare(`
+      SELECT
+        api,
+        COALESCE(SUM(success_count), 0) AS success_count,
+        COALESCE(SUM(fail_count), 0) AS fail_count
+      FROM api_stats_hourly
+      WHERE hour_bucket >= ?
+      GROUP BY api
+      HAVING SUM(success_count + fail_count) > 0
+      ORDER BY fail_count DESC, CAST(fail_count AS REAL) / SUM(success_count + fail_count) DESC, api ASC
+      LIMIT ?
+    `).bind(cutoff, safeLimit).all<{ api: string; success_count: number; fail_count: number }>();
+    return results.map((row) => {
+      const success = Number(row.success_count);
+      const fail = Number(row.fail_count);
+      const total = success + fail;
+      return {
+        api: row.api,
+        success_count: success,
+        fail_count: fail,
+        total_count: total,
+        fail_rate: total > 0 ? fail / total : 0,
+      };
+    });
   }
 
   async snapshot(): Promise<Array<{ api: string; call_count: number; last_called: number }>> {

@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { handleAppRequest, type AppRuntime, type RuntimeEnv } from '../src/app.js';
 import { serverError } from '../src/endpoints/base.js';
 import type { Device } from '../src/device/pool.js';
@@ -15,9 +15,27 @@ const BASE_ENV: RuntimeEnv = {
   AUTH_PASSWORD: 'secret',
 };
 
-function makeRuntime(): AppRuntime {
+interface TestRuntime extends AppRuntime {
+  waits: Promise<unknown>[];
+  calls: {
+    record: string[];
+    hourlyHit: string[];
+    hourlyFail: string[];
+    deviceFailure: string[];
+  };
+}
+
+function makeRuntime(): TestRuntime {
   const waits: Promise<unknown>[] = [];
+  const calls: TestRuntime['calls'] = {
+    record: [],
+    hourlyHit: [],
+    hourlyFail: [],
+    deviceFailure: [],
+  };
   return {
+    waits,
+    calls,
     waitUntil: {
       waitUntil(promise: Promise<unknown>) {
         waits.push(promise.catch(() => {}));
@@ -40,8 +58,18 @@ function makeRuntime(): AppRuntime {
       },
     },
     stats: {
-      async record() {},
-      async recordHourlyHit() {},
+      async record(api: string) {
+        calls.record.push(api);
+      },
+      async recordHourlyHit(api: string) {
+        calls.hourlyHit.push(api);
+      },
+      async recordHourlyFail(api: string) {
+        calls.hourlyFail.push(api);
+      },
+      async apiHealthSummary() {
+        return [];
+      },
       async snapshot() {
         return [];
       },
@@ -58,7 +86,9 @@ function makeRuntime(): AppRuntime {
         return null;
       },
       async setMeta() {},
-      async recordDeviceFailure() {},
+      async recordDeviceFailure(reason: string) {
+        calls.deviceFailure.push(reason);
+      },
       async deviceFailureSummary() {
         return [];
       },
@@ -70,26 +100,40 @@ async function readJson(response: Response): Promise<{ success: boolean; error?:
   return await response.json() as { success: boolean; error?: string };
 }
 
+async function flushRuntime(runtime: TestRuntime): Promise<void> {
+  await Promise.all(runtime.waits);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('public API parameter limits', () => {
   beforeEach(() => {
     // These tests use POST to bypass Workers Cache API and exercise the app
     // router plus endpoint validation without requiring a Cloudflare runtime.
     delete (globalThis as { caches?: unknown }).caches;
+    vi.spyOn(Math, 'random').mockReturnValue(0);
   });
 
   test('content rejects too many item_ids before upstream/device access', async () => {
     const ids = Array.from({ length: 21 }, (_, i) => String(i + 1)).join(',');
+    const runtime = makeRuntime();
     const response = await handleAppRequest(
       new Request(`https://example.test/?api=content&item_ids=${ids}`, { method: 'POST' }),
       BASE_ENV,
-      makeRuntime(),
+      runtime,
     );
+    await flushRuntime(runtime);
 
     expect(response.status).toBe(400);
     expect(await readJson(response)).toMatchObject({
       success: false,
       error: 'item_ids一次最多允许20个ID',
     });
+    expect(runtime.calls.record).toEqual(['content']);
+    expect(runtime.calls.hourlyHit).toEqual([]);
+    expect(runtime.calls.hourlyFail).toEqual([]);
   });
 
   test('search rejects count over the configured limit', async () => {
@@ -138,6 +182,29 @@ describe('public API parameter limits', () => {
       success: false,
       error: 'offset参数范围必须是 0-1000',
     });
+  });
+});
+
+describe('API outcome stats', () => {
+  beforeEach(() => {
+    delete (globalThis as { caches?: unknown }).caches;
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+  });
+
+  test('5xx business failures are counted as hourly failures', async () => {
+    const runtime = makeRuntime();
+    const response = await handleAppRequest(
+      new Request('https://example.test/?api=content&item_ids=123', { method: 'POST' }),
+      BASE_ENV,
+      runtime,
+    );
+    await flushRuntime(runtime);
+
+    expect(response.status).toBe(503);
+    expect(runtime.calls.record).toEqual(['content']);
+    expect(runtime.calls.hourlyHit).toEqual([]);
+    expect(runtime.calls.hourlyFail).toEqual(['content']);
+    expect(runtime.calls.deviceFailure).toContain('device pool is empty');
   });
 });
 

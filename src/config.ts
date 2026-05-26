@@ -1,5 +1,5 @@
 export const RUNTIME_CONFIG = {
-  dashboardCacheVersion: 'dashboard_v3_device_diag',
+  dashboardCacheVersion: 'dashboard_v4_api_health',
   apiCacheVersion: 'api_v1',
   upstreamTimeoutMs: 15000,
   statsSampleRates: {
