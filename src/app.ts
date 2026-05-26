@@ -87,7 +87,7 @@ function bookSourceResponse(): Response {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
-      'cache-control': 'public, max-age=3600',
+      'cache-control': 'no-cache',
     },
   });
 }
