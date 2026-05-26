@@ -103,6 +103,16 @@ function paragraphRuleResponse(): Response {
   });
 }
 
+function paragraphRuleJsResponse(): Response {
+  return new Response(`${paragraphRule.jsLib}\n${paragraphRule.script}\n`, {
+    headers: {
+      'content-type': 'text/javascript; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-cache',
+    },
+  });
+}
+
 function commentIconResponse(): Response {
   const svg =
     '<svg width="120" height="64" xmlns="http://www.w3.org/2000/svg">' +
@@ -275,6 +285,9 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   }
   if (url.pathname === '/paragraphRule-fq-tt-worker.json' || url.searchParams.get('api') === 'paragraph_rule') {
     return paragraphRuleResponse();
+  }
+  if (url.pathname === '/paragraphRule-fq-tt-worker.js' || url.searchParams.get('api') === 'paragraph_rule_js') {
+    return paragraphRuleJsResponse();
   }
   if (url.pathname === '/comment-icon.svg') return commentIconResponse();
   if (url.pathname === '/favicon.ico') return new Response(null, { status: 204 });

@@ -119,6 +119,18 @@ curl "https://你的域名/?refresh=1&password=你的密码"
 https://你的域名/?api=content&item_ids=7360705605574607385
 ```
 
+## 阅读书源和段评
+
+书源和段评是两套独立配置：
+
+- 书源导入地址：`https://fq-tt-worker.ch6vip.workers.dev/bookSource-fq-tt-worker.json`
+- 段落处理规则 JSON：`https://fq-tt-worker.ch6vip.workers.dev/paragraphRule-fq-tt-worker.json`
+- 段落处理规则 JS：`https://fq-tt-worker.ch6vip.workers.dev/paragraphRule-fq-tt-worker.js`
+
+Luoyacheng/legado 版本的段评需要使用“段落处理规则”。这个规则不会随书源自动启用，需要在阅读页进入“段落规则管理”，为当前书启用 `fq-tt-worker` 段落规则。
+
+规则入口是 `process(ctx)`。本项目的段落规则会读取当前章节上下文里的 `book_id`、`item_id`，在正文段落后插入段评入口，点击后通过 Worker 的 `comment_page` 打开段评页面。
+
 ### 业务端点
 
 | API | 功能 | 常用参数 | 示例 |
