@@ -18,7 +18,7 @@ import { handleToutiao } from './endpoints/toutiao.js';
 import { handleToutiaoArticle } from './endpoints/toutiao_article.js';
 import { handleVideo } from './endpoints/video.js';
 import { handleWkcontent } from './endpoints/wkcontent.js';
-import type { EndpointContext } from './endpoints/base.js';
+import { normalizeFailureReason, type EndpointContext } from './endpoints/base.js';
 import type { DevicePoolStore, StatsStore, WaitUntilContext } from './platform.js';
 import { signRequest, type SignatureOptions } from './signature.js';
 
@@ -253,6 +253,7 @@ export async function refillDevicePool(env: RuntimeEnv, pool: DevicePoolStore, s
   inserted: number;
   failed: number;
   errors: string[];
+  errorSummary: Array<{ reason: string; count: number }>;
 }>;
 export async function refillDevicePool(
   env: RuntimeEnv,
@@ -267,6 +268,7 @@ export async function refillDevicePool(
   inserted: number;
   failed: number;
   errors: string[];
+  errorSummary: Array<{ reason: string; count: number }>;
 }>;
 export async function refillDevicePool(
   env: RuntimeEnv,
@@ -281,6 +283,7 @@ export async function refillDevicePool(
   inserted: number;
   failed: number;
   errors: string[];
+  errorSummary: Array<{ reason: string; count: number }>;
 }> {
   await stats.setMeta('last_cron_run', Date.now());
   await stats.setMeta('first_run', Date.now(), 'insert-if-missing');
@@ -294,7 +297,7 @@ export async function refillDevicePool(
   const target = parseInt(env.MIN_POOL_SIZE, 10);
   const readyBefore = await pool.countReady();
   if (readyBefore >= target) {
-    return { target, readyBefore, needed: 0, attempted: 0, inserted: 0, failed: 0, errors: [] };
+    return { target, readyBefore, needed: 0, attempted: 0, inserted: 0, failed: 0, errors: [], errorSummary: [] };
   }
 
   const needed = target - readyBefore;
@@ -312,7 +315,9 @@ export async function refillDevicePool(
       const dev = await registerAndroidDevice(sigOpts, { throwOnFailure: true });
       if (!dev) {
         failed++;
-        errors.push('registerAndroidDevice returned null');
+        const reason = normalizeFailureReason('registerAndroidDevice returned null');
+        errors.push(reason);
+        await stats.recordDeviceFailure(reason);
         continue;
       }
       await pool.insert({
@@ -323,13 +328,24 @@ export async function refillDevicePool(
       inserted++;
     } catch (e) {
       failed++;
-      const message = (e as Error).message;
+      const message = normalizeFailureReason((e as Error).message);
       errors.push(message);
+      await stats.recordDeviceFailure(message);
       console.error('refill: registerAndroidDevice failed:', message);
     }
   }
 
-  return { target, readyBefore, needed, attempted, inserted, failed, errors };
+  return { target, readyBefore, needed, attempted, inserted, failed, errors, errorSummary: summarizeErrors(errors) };
+}
+
+function summarizeErrors(errors: string[]): Array<{ reason: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const error of errors) {
+    counts.set(error, (counts.get(error) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
 export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: AppRuntime): Promise<Response> {
@@ -349,7 +365,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   const api = url.searchParams.get('api') ?? (url.pathname === '/' ? 'dashboard' : '');
 
   const sigOpts = buildSignatureOptions(env);
-  const endpointCtx: EndpointContext = { sigOpts, pool: runtime.pool, ctx: runtime.waitUntil };
+  const endpointCtx: EndpointContext = { sigOpts, pool: runtime.pool, stats: runtime.stats, ctx: runtime.waitUntil };
 
   if (api && api !== 'dashboard' && api !== 'stats_detail' && api !== 'sign' && api !== 'admin_refill') {
     const sampled = shouldRecordStats(api);
@@ -378,14 +394,21 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
 
   if (api === 'stats_detail') {
     if (!isProtectedEndpointAllowed(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-    const ready = await runtime.pool.countReady();
-    const counters = await runtime.stats.snapshot();
-    return jsonResponse({ success: true, data: { ready_devices: ready, ts: Date.now(), counters } });
+    const [ready, counters, failures] = await Promise.all([
+      runtime.pool.countReady(),
+      runtime.stats.snapshot(),
+      runtime.stats.deviceFailureSummary(5),
+    ]);
+    return jsonResponse({ success: true, data: { ready_devices: ready, ts: Date.now(), counters, device_failures: failures } });
   }
 
   if (api === 'device_pool') {
     if (!isProtectedEndpointAllowed(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-    return jsonResponse({ success: true, data: await runtime.pool.groupStats() });
+    const [groups, failures] = await Promise.all([
+      runtime.pool.groupStats(),
+      runtime.stats.deviceFailureSummary(5),
+    ]);
+    return jsonResponse({ success: true, data: { groups, failures } });
   }
 
   if (api === 'kv_probe') {

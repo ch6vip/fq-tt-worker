@@ -11,6 +11,12 @@ export interface DeviceGroupStats {
   newest: number;
 }
 
+export interface DeviceFailureSummary {
+  reason: string;
+  fail_count: number;
+  last_seen: number;
+}
+
 export interface DevicePoolStore {
   pickDevice(waitUntil?: (p: Promise<unknown>) => void): Promise<Device | null>;
   markFailed(deviceId: string): Promise<void>;
@@ -29,4 +35,6 @@ export interface StatsStore {
   cleanupHourly(retentionMs?: number): Promise<number>;
   getMeta(key: string): Promise<number | null>;
   setMeta(key: string, value: number, mode?: 'upsert' | 'insert-if-missing'): Promise<void>;
+  recordDeviceFailure(reason: string, count?: number): Promise<void>;
+  deviceFailureSummary(limit?: number): Promise<DeviceFailureSummary[]>;
 }

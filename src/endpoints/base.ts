@@ -4,7 +4,7 @@
 
 import { signRequest, type SignatureOptions } from '../signature.js';
 import type { Device } from '../device/pool.js';
-import type { DevicePoolStore, WaitUntilContext } from '../platform.js';
+import type { DevicePoolStore, StatsStore, WaitUntilContext } from '../platform.js';
 import { fetchWithTimeout } from '../http.js';
 
 const DEFAULT_USER_AGENT =
@@ -18,6 +18,7 @@ const SIGNATURE_HEADER_KEYS = new Set([
 export interface EndpointContext {
   sigOpts: SignatureOptions;
   pool: DevicePoolStore;
+  stats?: StatsStore;
   ctx: WaitUntilContext;
 }
 
@@ -86,7 +87,10 @@ export async function fetchWithDevice(
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const device = await ctx.pool.pickDevice();
-    if (!device) throw new Error('device pool is empty');
+    if (!device) {
+      recordDeviceFailure(ctx, 'device pool is empty');
+      throw new Error('device pool is empty');
+    }
 
     const url = urlTemplate
       .replaceAll('{device_id}', device.device_id)
@@ -98,6 +102,7 @@ export async function fetchWithDevice(
       if (looksLikeDeviceAuthFail(res.status)) {
         console.warn(`device ${device.device_id} auth failed (HTTP ${res.status}); marking failed`);
         ctx.ctx.waitUntil(ctx.pool.markFailed(device.device_id));
+        recordDeviceFailure(ctx, `DEVICE_FAILED: HTTP ${res.status}`);
         lastErr = new Error(`DEVICE_FAILED: HTTP ${res.status}`);
         continue;
       }
@@ -105,6 +110,7 @@ export async function fetchWithDevice(
     } catch (e) {
       lastErr = e as Error;
       ctx.ctx.waitUntil(ctx.pool.markFailed(device.device_id));
+      recordDeviceFailure(ctx, lastErr.message);
     }
   }
   throw new Error(`fetchWithDevice failed after ${maxRetries} attempts: ${lastErr?.message ?? 'unknown'}`);
@@ -132,7 +138,10 @@ export async function withDeviceRetry<T>(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     // Fast path: read device synchronously, schedule the touch update on waitUntil.
     const device = await ctx.pool.pickDevice(p => ctx.ctx.waitUntil(p));
-    if (!device) throw new Error('device pool is empty');
+    if (!device) {
+      recordDeviceFailure(ctx, 'device pool is empty');
+      throw new Error('device pool is empty');
+    }
     try {
       return await fn(device);
     } catch (e) {
@@ -140,6 +149,7 @@ export async function withDeviceRetry<T>(
       if (!lastErr.message.startsWith('DEVICE_FAILED')) throw lastErr;
       console.warn(`device ${device.device_id} failed (attempt ${attempt + 1}): ${lastErr.message}`);
       ctx.ctx.waitUntil(ctx.pool.markFailed(device.device_id));
+      recordDeviceFailure(ctx, lastErr.message);
     }
   }
   throw new Error(`withDeviceRetry exhausted after ${maxRetries}: ${lastErr?.message ?? 'unknown'}`);
@@ -147,6 +157,31 @@ export async function withDeviceRetry<T>(
 
 export function isDeviceAuthFail(status: number): boolean {
   return looksLikeDeviceAuthFail(status);
+}
+
+function recordDeviceFailure(ctx: EndpointContext, reason: string): void {
+  if (!ctx.stats) return;
+  ctx.ctx.waitUntil(ctx.stats.recordDeviceFailure(normalizeFailureReason(reason)).catch(() => {}));
+}
+
+export function normalizeFailureReason(reason: string): string {
+  const cleaned = reason
+    .replace(/\bdevice[_ -]?id[=:]\s*\d+/gi, 'device_id=<redacted>')
+    .replace(/\binstall[_ -]?id[=:]\s*\d+/gi, 'install_id=<redacted>')
+    .replace(/\b\d{16,20}\b/g, '<id>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'unknown';
+  if (/device pool is empty/i.test(cleaned)) return 'device pool is empty';
+  const deviceHttp = cleaned.match(/DEVICE_FAILED:\s*HTTP\s*(\d+)/i);
+  if (deviceHttp?.[1]) return `DEVICE_FAILED: HTTP ${deviceHttp[1]}`;
+  if (/upstream timeout/i.test(cleaned)) return 'upstream timeout';
+  const registerKeyHttp = cleaned.match(/registerkey HTTP\s*(\d+)/i);
+  if (registerKeyHttp?.[1]) return `registerkey HTTP ${registerKeyHttp[1]}`;
+  const deviceRegisterHttp = cleaned.match(/device_register HTTP\s*(\d+)/i);
+  if (deviceRegisterHttp?.[1]) return `device_register HTTP ${deviceRegisterHttp[1]}`;
+  if (/secret_key fetch failed/i.test(cleaned)) return 'secret_key fetch failed';
+  return cleaned.slice(0, 180);
 }
 
 function stripSignatureHeaders(headers: Record<string, string>): Record<string, string> {

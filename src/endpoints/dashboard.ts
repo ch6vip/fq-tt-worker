@@ -3,11 +3,12 @@ import type { DevicePoolStore, StatsStore } from '../platform.js';
 export async function handleDashboard(
   stats: StatsStore, pool: DevicePoolStore
 ): Promise<Response> {
-  const [totalCalls, todayCalls, readyCount, deviceGroups, lastCronRun, firstRun] = await Promise.all([
+  const [totalCalls, todayCalls, readyCount, deviceGroups, deviceFailures, lastCronRun, firstRun] = await Promise.all([
     stats.totalCalls(),
     stats.todayCalls(),
     pool.countReady(),
     pool.groupStats(),
+    stats.deviceFailureSummary(5),
     stats.getMeta('last_cron_run'),
     stats.getMeta('first_run'),
   ]);
@@ -17,6 +18,7 @@ export async function handleDashboard(
     todayCalls,
     readyCount,
     deviceGroups,
+    deviceFailures,
     lastCronRun,
     firstRun,
     ts: Date.now(),
@@ -117,6 +119,28 @@ function buildHtml(dataJson: string): string {
         <span class="text-[11px] sm:text-xs text-white/80" x-text="'Cron ' + cronRelativeLabel()"></span>
       </div>
     </div>
+    <div class="mt-6 pt-5 border-t border-gray-100">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-sm font-medium text-gray-600">设备池诊断</div>
+        <div class="text-xs text-gray-400">失败原因 Top 5</div>
+      </div>
+      <template x-if="(data.deviceFailures || []).length === 0">
+        <div class="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-sm text-gray-500">暂无失败记录</div>
+      </template>
+      <div class="space-y-2" x-show="(data.deviceFailures || []).length > 0">
+        <template x-for="f in (data.deviceFailures || [])" :key="f.reason">
+          <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-gray-700 break-all" x-text="f.reason"></div>
+                <div class="text-xs text-gray-400 mt-1" x-text="'最后出现: ' + formatTime(f.last_seen)"></div>
+              </div>
+              <div class="shrink-0 text-sm font-semibold text-red-600" x-text="formatNum(f.fail_count)"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -168,6 +192,10 @@ function dashboard() {
       if (n>=1e6) return (n/1e6).toFixed(1)+'M';
       if (n>=1e3) return (n/1e3).toFixed(1)+'K';
       return String(n);
+    },
+    formatTime(ts) {
+      if (!ts) return '—';
+      return new Date(ts).toLocaleString('zh-CN');
     },
     // --- Uptime helpers ---
     uptimeMs() {

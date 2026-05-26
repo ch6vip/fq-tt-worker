@@ -58,6 +58,10 @@ function makeRuntime(): AppRuntime {
         return null;
       },
       async setMeta() {},
+      async recordDeviceFailure() {},
+      async deviceFailureSummary() {
+        return [];
+      },
     },
   };
 }

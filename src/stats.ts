@@ -72,4 +72,29 @@ export class StatsManager implements StatsStore {
       `INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
     ).bind(key, value).run();
   }
+
+  async recordDeviceFailure(reason: string, count = 1): Promise<void> {
+    const safeReason = sanitizeFailureReason(reason);
+    const now = Date.now();
+    await this.db.prepare(`
+      INSERT INTO device_failures (reason, fail_count, last_seen) VALUES (?1, ?2, ?3)
+      ON CONFLICT(reason) DO UPDATE
+        SET fail_count = fail_count + ?2, last_seen = ?3
+    `).bind(safeReason, count, now).run();
+  }
+
+  async deviceFailureSummary(limit = 5): Promise<Array<{ reason: string; fail_count: number; last_seen: number }>> {
+    const safeLimit = Math.max(1, Math.min(20, Math.floor(limit)));
+    const { results } = await this.db.prepare(`
+      SELECT reason, fail_count, last_seen
+      FROM device_failures
+      ORDER BY fail_count DESC, last_seen DESC
+      LIMIT ?
+    `).bind(safeLimit).all<{ reason: string; fail_count: number; last_seen: number }>();
+    return results;
+  }
+}
+
+function sanitizeFailureReason(reason: string): string {
+  return reason.replace(/\s+/g, ' ').trim().slice(0, 180) || 'unknown';
 }

@@ -34,6 +34,12 @@ interface HourlyStat {
   fail_count: number;
 }
 
+interface DeviceFailureStat {
+  reason: string;
+  fail_count: number;
+  last_seen: number;
+}
+
 async function getJson<T>(kv: EdgeOneKV, key: string): Promise<T | null> {
   const value = await kv.get(key, { type: 'json' });
   if (value == null) return null;
@@ -173,6 +179,10 @@ export class EdgeOneKVStats implements StatsStore {
     return `stats_hour_${bucket}_${kvSafePart(api)}`;
   }
 
+  private deviceFailureKey(reason: string): string {
+    return `device_failure_${kvSafePart(reason).slice(0, 120)}`;
+  }
+
   async record(api: string): Promise<void> {
     const key = this.apiKey(api);
     const row = await getJson<ApiStat>(this.kv, key) ?? { api, call_count: 0, last_called: 0 };
@@ -242,6 +252,28 @@ export class EdgeOneKVStats implements StatsStore {
     const kvKey = `meta_${kvSafePart(key)}`;
     if (mode === 'insert-if-missing' && await this.kv.get(kvKey) != null) return;
     await this.kv.put(kvKey, String(value));
+  }
+
+  async recordDeviceFailure(reason: string, count = 1): Promise<void> {
+    const safeReason = reason.replace(/\s+/g, ' ').trim().slice(0, 180) || 'unknown';
+    const key = this.deviceFailureKey(safeReason);
+    const row = await getJson<DeviceFailureStat>(this.kv, key) ?? {
+      reason: safeReason,
+      fail_count: 0,
+      last_seen: 0,
+    };
+    row.fail_count += count;
+    row.last_seen = Date.now();
+    await putJson(this.kv, key, row);
+  }
+
+  async deviceFailureSummary(limit = 5): Promise<DeviceFailureStat[]> {
+    const keys = await listAllKeys(this.kv, 'device_failure_');
+    const rows = await Promise.all(keys.map(key => getJson<DeviceFailureStat>(this.kv, key)));
+    return rows
+      .filter((row): row is DeviceFailureStat => !!row)
+      .sort((a, b) => b.fail_count - a.fail_count || b.last_seen - a.last_seen)
+      .slice(0, Math.max(1, Math.min(20, Math.floor(limit))));
   }
 }
 
