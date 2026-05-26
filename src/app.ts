@@ -46,6 +46,27 @@ export interface AppRuntime {
   probeKV?: () => Promise<unknown>;
 }
 
+export interface RefillDevicePoolResult {
+  target: number;
+  readyBefore: number;
+  needed: number;
+  attempted: number;
+  inserted: number;
+  failed: number;
+  errors: string[];
+  errorSummary: Array<{ reason: string; count: number }>;
+  skipped: boolean;
+  skipReason?: 'locked' | 'cooldown';
+  lockUntil: number;
+  cooldownUntil: number;
+  requestedMaxAttempts: number | null;
+  effectiveMaxAttempts: number;
+  limitCapped: boolean;
+}
+
+const REFILL_LOCK_META_KEY = 'refill_lock_until';
+const REFILL_COOLDOWN_META_KEY = 'refill_failure_cooldown_until';
+
 function hexBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
@@ -286,88 +307,137 @@ export async function refillDevicePool(env: RuntimeEnv, pool: DevicePoolStore, s
   failed: number;
   errors: string[];
   errorSummary: Array<{ reason: string; count: number }>;
+  skipped: boolean;
+  skipReason?: 'locked' | 'cooldown';
+  lockUntil: number;
+  cooldownUntil: number;
+  requestedMaxAttempts: number | null;
+  effectiveMaxAttempts: number;
+  limitCapped: boolean;
 }>;
 export async function refillDevicePool(
   env: RuntimeEnv,
   pool: DevicePoolStore,
   stats: StatsStore,
   maxAttempts: number,
-): Promise<{
-  target: number;
-  readyBefore: number;
-  needed: number;
-  attempted: number;
-  inserted: number;
-  failed: number;
-  errors: string[];
-  errorSummary: Array<{ reason: string; count: number }>;
-}>;
+): Promise<RefillDevicePoolResult>;
 export async function refillDevicePool(
   env: RuntimeEnv,
   pool: DevicePoolStore,
   stats: StatsStore,
   maxAttempts?: number,
-): Promise<{
-  target: number;
-  readyBefore: number;
-  needed: number;
-  attempted: number;
-  inserted: number;
-  failed: number;
-  errors: string[];
-  errorSummary: Array<{ reason: string; count: number }>;
-}> {
-  await stats.setMeta('last_cron_run', Date.now());
-  await stats.setMeta('first_run', Date.now(), 'insert-if-missing');
-
-  const removed = await pool.cleanup(7 * 24 * 60 * 60 * 1000);
-  if (removed > 0) console.log(`refill: cleaned ${removed} dead/expired devices`);
-
-  const statsRemoved = await stats.cleanupHourly();
-  if (statsRemoved > 0) console.log(`refill: cleaned ${statsRemoved} old hourly stats rows`);
+): Promise<RefillDevicePoolResult> {
+  const now = Date.now();
+  await stats.setMeta('last_cron_run', now);
+  await stats.setMeta('first_run', now, 'insert-if-missing');
 
   const target = parseInt(env.MIN_POOL_SIZE, 10);
   const readyBefore = await pool.countReady();
-  if (readyBefore >= target) {
-    return { target, readyBefore, needed: 0, attempted: 0, inserted: 0, failed: 0, errors: [], errorSummary: [] };
+  const requestedMaxAttempts = Number.isFinite(maxAttempts ?? NaN) ? Math.max(0, Math.floor(maxAttempts!)) : null;
+  const cappedRequestedMaxAttempts = requestedMaxAttempts == null
+    ? null
+    : Math.min(requestedMaxAttempts, RUNTIME_CONFIG.refill.adminMaxAttempts);
+  const baseResult = (overrides: Partial<RefillDevicePoolResult> = {}): RefillDevicePoolResult => ({
+    target,
+    readyBefore,
+    needed: Math.max(0, target - readyBefore),
+    attempted: 0,
+    inserted: 0,
+    failed: 0,
+    errors: [],
+    errorSummary: [],
+    skipped: false,
+    lockUntil: 0,
+    cooldownUntil: 0,
+    requestedMaxAttempts,
+    effectiveMaxAttempts: cappedRequestedMaxAttempts ?? Math.max(0, target - readyBefore),
+    limitCapped: requestedMaxAttempts != null && cappedRequestedMaxAttempts !== requestedMaxAttempts,
+    ...overrides,
+  });
+
+  const lockUntil = await stats.getMeta(REFILL_LOCK_META_KEY);
+  if (lockUntil != null && lockUntil > now) {
+    return baseResult({ skipped: true, skipReason: 'locked', lockUntil });
   }
 
-  const needed = target - readyBefore;
-  const attempted = Math.max(0, Math.min(
-    needed,
-    Number.isFinite(maxAttempts ?? NaN) ? Math.floor(maxAttempts!) : needed,
-  ));
-  let inserted = 0;
-  let failed = 0;
-  const errors: string[] = [];
-  const sigOpts = buildSignatureOptions(env);
+  const cooldownUntil = await stats.getMeta(REFILL_COOLDOWN_META_KEY);
+  if (cooldownUntil != null && cooldownUntil > now) {
+    return baseResult({ skipped: true, skipReason: 'cooldown', cooldownUntil });
+  }
 
-  for (let i = 0; i < attempted; i++) {
-    try {
-      const dev = await registerAndroidDevice(sigOpts, { throwOnFailure: true });
-      if (!dev) {
-        failed++;
-        const reason = normalizeFailureReason('registerAndroidDevice returned null');
-        errors.push(reason);
-        await stats.recordDeviceFailure(reason);
-        continue;
-      }
-      await pool.insert({
-        device_id: dev.device_id,
-        install_id: dev.install_id,
-        secret_key: dev.secret_key,
+  const activeLockUntil = now + RUNTIME_CONFIG.refill.lockTtlMs;
+  await stats.setMeta(REFILL_LOCK_META_KEY, activeLockUntil);
+
+  let nextCooldownUntil = 0;
+  try {
+    const removed = await pool.cleanup(7 * 24 * 60 * 60 * 1000);
+    if (removed > 0) console.log(`refill: cleaned ${removed} dead/expired devices`);
+
+    const statsRemoved = await stats.cleanupHourly();
+    if (statsRemoved > 0) console.log(`refill: cleaned ${statsRemoved} old hourly stats rows`);
+
+    const readyAfterCleanup = await pool.countReady();
+    const needed = Math.max(0, target - readyAfterCleanup);
+    if (readyAfterCleanup >= target) {
+      return baseResult({
+        readyBefore: readyAfterCleanup,
+        needed: 0,
+        effectiveMaxAttempts: cappedRequestedMaxAttempts ?? 0,
       });
-      inserted++;
-    } catch (e) {
-      failed++;
-      const message = normalizeFailureReason((e as Error).message);
-      errors.push(message);
-      await stats.recordDeviceFailure(message);
-      console.error('refill: registerAndroidDevice failed:', message);
     }
-  }
 
-  return { target, readyBefore, needed, attempted, inserted, failed, errors, errorSummary: summarizeErrors(errors) };
+    const effectiveMaxAttempts = cappedRequestedMaxAttempts ?? needed;
+    const attempted = Math.max(0, Math.min(needed, effectiveMaxAttempts));
+    let inserted = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    const sigOpts = buildSignatureOptions(env);
+
+    for (let i = 0; i < attempted; i++) {
+      try {
+        const dev = await registerAndroidDevice(sigOpts, { throwOnFailure: true });
+        if (!dev) {
+          failed++;
+          const reason = normalizeFailureReason('registerAndroidDevice returned null');
+          errors.push(reason);
+          await stats.recordDeviceFailure(reason);
+          continue;
+        }
+        await pool.insert({
+          device_id: dev.device_id,
+          install_id: dev.install_id,
+          secret_key: dev.secret_key,
+        });
+        inserted++;
+      } catch (e) {
+        failed++;
+        const message = normalizeFailureReason((e as Error).message);
+        errors.push(message);
+        await stats.recordDeviceFailure(message);
+        console.error('refill: registerAndroidDevice failed:', message);
+      }
+    }
+
+    if (attempted > 0 && failed >= attempted) {
+      nextCooldownUntil = Date.now() + RUNTIME_CONFIG.refill.failureCooldownMs;
+      await stats.setMeta(REFILL_COOLDOWN_META_KEY, nextCooldownUntil);
+    }
+
+    return baseResult({
+      needed,
+      readyBefore: readyAfterCleanup,
+      attempted,
+      inserted,
+      failed,
+      errors,
+      errorSummary: summarizeErrors(errors),
+      lockUntil: activeLockUntil,
+      cooldownUntil: nextCooldownUntil,
+      effectiveMaxAttempts,
+    });
+  } finally {
+    await stats.setMeta(REFILL_LOCK_META_KEY, 0);
+  }
 }
 
 function summarizeErrors(errors: string[]): Array<{ reason: string; count: number }> {
@@ -445,7 +515,8 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   if (api === 'admin_refill') {
     if (!isAuthorized(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
     const limitParam = url.searchParams.get('limit');
-    const limit = limitParam == null ? 1 : Number(limitParam);
+    const parsedLimit = limitParam == null ? 1 : Number(limitParam);
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 1;
     return jsonResponse({ success: true, data: await refillDevicePool(env, runtime.pool, runtime.stats, limit) });
   }
 

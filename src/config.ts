@@ -2,6 +2,11 @@ export const RUNTIME_CONFIG = {
   dashboardCacheVersion: 'dashboard_v4_api_health',
   apiCacheVersion: 'api_v1',
   upstreamTimeoutMs: 15000,
+  refill: {
+    adminMaxAttempts: 3,
+    lockTtlMs: 8 * 60 * 1000,
+    failureCooldownMs: 30 * 60 * 1000,
+  },
   statsSampleRates: {
     content: 0.2,
     full: 0.2,

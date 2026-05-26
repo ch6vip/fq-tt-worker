@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { handleAppRequest, type AppRuntime, type RuntimeEnv } from '../src/app.js';
 import { serverError } from '../src/endpoints/base.js';
 import type { Device } from '../src/device/pool.js';
+import { registerAndroidDevice } from '../src/device/register.js';
+
+vi.mock('../src/device/register.js', () => ({
+  registerAndroidDevice: vi.fn(),
+}));
 
 const BASE_ENV: RuntimeEnv = {
   AID: '1967',
@@ -17,6 +22,7 @@ const BASE_ENV: RuntimeEnv = {
 
 interface TestRuntime extends AppRuntime {
   waits: Promise<unknown>[];
+  meta: Map<string, number>;
   calls: {
     record: string[];
     hourlyHit: string[];
@@ -27,6 +33,7 @@ interface TestRuntime extends AppRuntime {
 
 function makeRuntime(): TestRuntime {
   const waits: Promise<unknown>[] = [];
+  const meta = new Map<string, number>();
   const calls: TestRuntime['calls'] = {
     record: [],
     hourlyHit: [],
@@ -35,6 +42,7 @@ function makeRuntime(): TestRuntime {
   };
   return {
     waits,
+    meta,
     calls,
     waitUntil: {
       waitUntil(promise: Promise<unknown>) {
@@ -82,10 +90,13 @@ function makeRuntime(): TestRuntime {
       async cleanupHourly() {
         return 0;
       },
-      async getMeta() {
-        return null;
+      async getMeta(key: string) {
+        return meta.get(key) ?? null;
       },
-      async setMeta() {},
+      async setMeta(key: string, value: number, mode: 'upsert' | 'insert-if-missing' = 'upsert') {
+        if (mode === 'insert-if-missing' && meta.has(key)) return;
+        meta.set(key, value);
+      },
       async recordDeviceFailure(reason: string) {
         calls.deviceFailure.push(reason);
       },
@@ -96,8 +107,10 @@ function makeRuntime(): TestRuntime {
   };
 }
 
-async function readJson(response: Response): Promise<{ success: boolean; error?: string }> {
-  return await response.json() as { success: boolean; error?: string };
+async function readJson<T extends { success: boolean; error?: string } = { success: boolean; error?: string }>(
+  response: Response,
+): Promise<T> {
+  return await response.json() as T;
 }
 
 async function flushRuntime(runtime: TestRuntime): Promise<void> {
@@ -209,6 +222,10 @@ describe('API outcome stats', () => {
 });
 
 describe('protected and debug endpoints', () => {
+  beforeEach(() => {
+    vi.mocked(registerAndroidDevice).mockReset();
+  });
+
   test('admin_insert_device requires POST JSON', async () => {
     const response = await handleAppRequest(
       new Request('https://example.test/?api=admin_insert_device&password=secret'),
@@ -239,6 +256,102 @@ describe('protected and debug endpoints', () => {
       success: false,
       error: 'request body must be JSON',
     });
+  });
+
+  test('admin_refill caps requested limit when pool is already full', async () => {
+    const runtime = makeRuntime();
+    runtime.pool.countReady = async () => 10;
+
+    const response = await handleAppRequest(
+      new Request('https://example.test/?api=admin_refill&password=secret&limit=99'),
+      BASE_ENV,
+      runtime,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await readJson<{
+      success: boolean;
+      data: { attempted: number; requestedMaxAttempts: number; effectiveMaxAttempts: number; limitCapped: boolean };
+    }>(response)).toMatchObject({
+      success: true,
+      data: {
+        attempted: 0,
+        requestedMaxAttempts: 99,
+        effectiveMaxAttempts: 3,
+        limitCapped: true,
+      },
+    });
+    expect(registerAndroidDevice).not.toHaveBeenCalled();
+  });
+
+  test('admin_refill skips while another refill lock is active', async () => {
+    const runtime = makeRuntime();
+    runtime.meta.set('refill_lock_until', Date.now() + 60_000);
+
+    const response = await handleAppRequest(
+      new Request('https://example.test/?api=admin_refill&password=secret&limit=1'),
+      BASE_ENV,
+      runtime,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await readJson<{
+      success: boolean;
+      data: { skipped: boolean; skipReason: string; attempted: number };
+    }>(response)).toMatchObject({
+      success: true,
+      data: {
+        skipped: true,
+        skipReason: 'locked',
+        attempted: 0,
+      },
+    });
+    expect(registerAndroidDevice).not.toHaveBeenCalled();
+  });
+
+  test('admin_refill enters cooldown after registration attempts all fail', async () => {
+    vi.mocked(registerAndroidDevice).mockResolvedValue(null);
+    const runtime = makeRuntime();
+
+    const first = await handleAppRequest(
+      new Request('https://example.test/?api=admin_refill&password=secret&limit=2'),
+      BASE_ENV,
+      runtime,
+    );
+
+    expect(first.status).toBe(200);
+    expect(await readJson<{
+      success: boolean;
+      data: { skipped: boolean; attempted: number; failed: number; cooldownUntil: number };
+    }>(first)).toMatchObject({
+      success: true,
+      data: {
+        skipped: false,
+        attempted: 2,
+        failed: 2,
+      },
+    });
+    expect(runtime.meta.get('refill_lock_until')).toBe(0);
+    expect(runtime.meta.get('refill_failure_cooldown_until')).toBeGreaterThan(Date.now());
+
+    const second = await handleAppRequest(
+      new Request('https://example.test/?api=admin_refill&password=secret&limit=1'),
+      BASE_ENV,
+      runtime,
+    );
+
+    expect(await readJson<{
+      success: boolean;
+      data: { skipped: boolean; skipReason: string; attempted: number };
+    }>(second)).toMatchObject({
+      success: true,
+      data: {
+        skipped: true,
+        skipReason: 'cooldown',
+        attempted: 0,
+      },
+    });
+    expect(registerAndroidDevice).toHaveBeenCalledTimes(2);
   });
 
   test('sign endpoint is disabled unless DEBUG_SIGN=1', async () => {
