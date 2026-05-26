@@ -10,7 +10,7 @@
 //   ?api=content&api_type=...&custom_url=  — override URL template with
 //                                            {$zwkey2} and {$item_id} placeholders
 //
-// Not yet ported: ts=听书 (audio), book_id+comment=评论 (comments), api_type=novel.
+// Not yet ported: ts=听书 (audio), comment=评论 (comments), api_type=novel.
 
 import { signRequest } from '../signature.js';
 import {
@@ -46,14 +46,12 @@ export async function handleContent(req: Request, ctx: EndpointContext): Promise
   const apiTypeReq = u.searchParams.get('api_type') ?? 'full';
   const customUrl = u.searchParams.get('custom_url') ?? '';
   const ts = u.searchParams.get('ts');
-  const bookId = u.searchParams.get('book_id');
   const comment = u.searchParams.get('comment');
 
   // Unsupported branches — fail loudly rather than mis-route.
   if (ts === '听书')                          return badRequest('audio (ts=听书) not yet ported');
   if (apiTypeReq === 'novel')                 return badRequest('api_type=novel not yet ported');
-  if (bookId && !comment)                     return badRequest('book detail not yet ported');
-  if (bookId && comment === '评论')            return badRequest('book comment not yet ported');
+  if (comment === '评论')                      return badRequest('book comment not yet ported');
 
   const isBatch = itemIds.includes(',') || apiTypeReq === 'batch';
   const apiType = isBatch ? 'batch' : apiTypeReq;
@@ -77,7 +75,7 @@ async function handleSingle(
   return await withDeviceRetry(ctx, async (device) => {
     const url = buildRequestUrl(itemId, device, apiType, customUrl);
     const resp = await makeChapterRequest(url, ctx);
-    const result = await processChapterResponse(resp, device.secret_key, apiType, url);
+    const result = await processChapterResponse(resp, device.secret_key, apiType, url, true);
     // handleSingle only takes the full-path branch, which always returns ChapterOut.
     return Array.isArray(result) ? result[0]! : result;
   });
@@ -152,13 +150,23 @@ async function processChapterResponse(
   secretKey: string,
   apiType: string,
   url: string,
+  retryOnBadPayload = false,
 ): Promise<ChapterOut | ChapterOut[]> {
   const isFullPath = apiType === 'full' || url.includes('/full/v/');
 
   if (isFullPath) {
     const data = (responseData.data ?? {}) as { content?: string };
-    if (!data.content) throw new Error('响应中缺少data.content字段');
-    const decrypted = await decryptResponse(data.content, secretKey);
+    if (!data.content) throw new Error(retryOnBadPayload ? 'DEVICE_FAILED: 响应中缺少data.content字段' : '响应中缺少data.content字段');
+    let decrypted: Uint8Array;
+    try {
+      decrypted = await decryptResponse(data.content, secretKey);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (retryOnBadPayload && /payload too short|decryptResponse|AES|decrypt/i.test(message)) {
+        throw new Error(`DEVICE_FAILED: ${message}`);
+      }
+      throw e;
+    }
     const text = new TextDecoder().decode(decrypted);
     return { content: processContent(text) };
   }
