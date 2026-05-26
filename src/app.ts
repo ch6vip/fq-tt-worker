@@ -1,5 +1,6 @@
 import { DEFAULT_ARGUS_CONSTANTS, type ArgusConstants } from './crypto/argus.js';
 import bookSource from '../bookSource-fq-tt-worker.json';
+import paragraphRule from '../paragraphRule-fq-tt-worker.json';
 import { registerAndroidDevice } from './device/register.js';
 import { handleBook } from './endpoints/book.js';
 import { handleBookShare } from './endpoints/book_share.js';
@@ -84,6 +85,16 @@ export function jsonResponse(body: unknown, status = 200): Response {
 
 function bookSourceResponse(): Response {
   return new Response(JSON.stringify(bookSource, null, 2), {
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-cache',
+    },
+  });
+}
+
+function paragraphRuleResponse(): Response {
+  return new Response(JSON.stringify(paragraphRule, null, 2), {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
@@ -261,6 +272,9 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   const url = new URL(req.url);
   if (url.pathname === '/bookSource-fq-tt-worker.json' || url.searchParams.get('api') === 'book_source') {
     return bookSourceResponse();
+  }
+  if (url.pathname === '/paragraphRule-fq-tt-worker.json' || url.searchParams.get('api') === 'paragraph_rule') {
+    return paragraphRuleResponse();
   }
   if (url.pathname === '/comment-icon.svg') return commentIconResponse();
   if (url.pathname === '/favicon.ico') return new Response(null, { status: 204 });
