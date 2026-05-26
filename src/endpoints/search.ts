@@ -77,7 +77,7 @@ export async function handleSearch(req: Request, ctx: EndpointContext): Promise<
 
   if (searchType === 'fanqie') {
     const q = u.searchParams.get('q');
-    if (!q) return badRequest('番茄搜索缺少参数q');
+    if (!q) return badRequest('缺少搜索关键词参数q');
     const offset = u.searchParams.get('offset') ?? '0';
     return handleFanqieSearch(q, offset, ctx);
   }

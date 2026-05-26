@@ -123,9 +123,9 @@ https://你的域名/?api=content&item_ids=7360705605574607385
 
 书源和段评是两套独立配置：
 
-- 书源导入地址：`https://fq-tt-worker.ch6vip.workers.dev/bookSource-fq-tt-worker.json`
-- 段落处理规则 JSON：`https://fq-tt-worker.ch6vip.workers.dev/paragraphRule-fq-tt-worker.json`
-- 段落处理规则 JS：`https://fq-tt-worker.ch6vip.workers.dev/paragraphRule-fq-tt-worker.js`
+- 书源导入地址：`https://fq.195050.xyz/bookSource-fq-tt-worker.json`
+- 段落处理规则 JSON：`https://fq.195050.xyz/paragraphRule-fq-tt-worker.json`
+- 段落处理规则 JS：`https://fq.195050.xyz/paragraphRule-fq-tt-worker.js`
 
 当前书源会在正文解析时直接为每个段落插入段评入口，Rimchars/legado 版本不再强依赖段落处理规则。更新书源后如果当前章节没有变化，需要清理章节缓存或重新下载章节。
 
@@ -222,7 +222,10 @@ http://localhost:8787
 - 倒计时只在浏览器本地更新，不消耗 Cloudflare 请求。
 - 每次打开面板仍然算一次 Worker 请求，这是 Cloudflare 入口请求，无法完全变成零消耗。
 
-业务 API 请求会消耗 Worker 请求、CPU、上游 fetch、D1 设备池读取和少量统计写入。统计写入做了采样，避免每次请求都写 D1。
+业务 API 请求会消耗 Worker 请求、CPU、上游 fetch、D1 设备池读取和少量统计写入。当前实现做了两类优化：
+
+- 高频接口统计写入会采样，`content`、`full`、`comment_list`、`comment_page` 按约 20% 采样，`search` 按约 50% 采样，并用权重补回估算调用量。
+- GET 业务接口会使用 Workers Cache API 做短缓存。目录和书籍信息缓存较长，正文默认缓存 1 小时，搜索缓存 10 分钟，段评缓存 1 分钟。
 
 ## EdgeOne 状态
 

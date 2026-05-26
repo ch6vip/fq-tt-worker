@@ -1,4 +1,4 @@
-var FQTT_BASE='https://fq-tt-worker.ch6vip.workers.dev';
+var FQTT_BASE='https://fq.195050.xyz';
 var FQTT_BROWSER={isHideable:true,expandedCornersRadius:12,skipCollapsed:true,hardwareAccelerated:true,heightPercentage:0.8};
 function fqGetQuery(url,name){var m=String(url||'').match(new RegExp('[?&]'+name+'=([^&#]*)'));return m&&m[1]?decodeURIComponent(m[1]):'';}
 function fqPickQuery(urls,names){for(var i=0;i<urls.length;i++)for(var j=0;j<names.length;j++){var v=fqGetQuery(urls[i],names[j]);if(v)return v;}return '';}

@@ -48,7 +48,7 @@ function buildHtml(dataJson: string): string {
 
 <!-- Header -->
 <div class="mb-8 fade-in">
-  <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">番茄小说 API 监控面板</h1>
+  <h1 class="text-2xl sm:text-3xl font-bold text-gray-800">内容 API 监控面板</h1>
   <p class="text-sm text-gray-500 mt-1">服务运行状态一览</p>
 </div>
 

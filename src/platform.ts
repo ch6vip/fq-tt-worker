@@ -21,8 +21,8 @@ export interface DevicePoolStore {
 }
 
 export interface StatsStore {
-  record(api: string): Promise<void>;
-  recordHourlyHit(api: string): Promise<void>;
+  record(api: string, count?: number): Promise<void>;
+  recordHourlyHit(api: string, count?: number): Promise<void>;
   snapshot(): Promise<Array<{ api: string; call_count: number; last_called: number }>>;
   totalCalls(): Promise<number>;
   todayCalls(): Promise<number>;

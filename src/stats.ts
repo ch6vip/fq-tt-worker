@@ -3,23 +3,23 @@ import type { StatsStore } from './platform.js';
 export class StatsManager implements StatsStore {
   constructor(private db: D1Database) {}
 
-  async record(api: string): Promise<void> {
+  async record(api: string, count = 1): Promise<void> {
     const now = Date.now();
     await this.db.prepare(`
-      INSERT INTO api_stats (api, call_count, last_called) VALUES (?1, 1, ?2)
+      INSERT INTO api_stats (api, call_count, last_called) VALUES (?1, ?2, ?3)
       ON CONFLICT(api) DO UPDATE
-        SET call_count = call_count + 1, last_called = ?2
-    `).bind(api, now).run();
+        SET call_count = call_count + ?2, last_called = ?3
+    `).bind(api, count, now).run();
   }
 
-  async recordHourlyHit(api: string): Promise<void> {
+  async recordHourlyHit(api: string, count = 1): Promise<void> {
     const bucket = Math.floor(Date.now() / 3600000) * 3600;
     await this.db.prepare(`
       INSERT INTO api_stats_hourly (api, hour_bucket, success_count, fail_count)
-      VALUES (?1, ?2, 1, 0)
+      VALUES (?1, ?2, ?3, 0)
       ON CONFLICT(api, hour_bucket) DO UPDATE
-        SET success_count = success_count + 1
-    `).bind(api, bucket).run();
+        SET success_count = success_count + ?3
+    `).bind(api, bucket, count).run();
   }
 
   async snapshot(): Promise<Array<{ api: string; call_count: number; last_called: number }>> {

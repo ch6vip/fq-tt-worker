@@ -22,6 +22,31 @@ import type { DevicePoolStore, StatsStore, WaitUntilContext } from './platform.j
 import { signRequest, type SignatureOptions } from './signature.js';
 
 const DASHBOARD_CACHE_VERSION = 'dashboard_v2_countdown';
+const API_CACHE_VERSION = 'api_v1';
+
+const STATS_SAMPLE_RATES: Record<string, number> = {
+  content: 0.2,
+  full: 0.2,
+  comment_list: 0.2,
+  comment_page: 0.2,
+  search: 0.5,
+};
+
+const API_CACHE_SECONDS: Record<string, number> = {
+  book: 21600,
+  directory: 21600,
+  full: 3600,
+  content: 3600,
+  search: 600,
+  item_info: 3600,
+  book_share: 1800,
+  manga: 3600,
+  video: 600,
+  toutiao: 3600,
+  wkcontent: 3600,
+  comment_list: 60,
+  comment_page: 60,
+};
 
 export interface RuntimeEnv {
   AID: string;
@@ -152,6 +177,50 @@ function isAuthorized(req: Request, env: RuntimeEnv): boolean {
 function isProtectedEndpointAllowed(req: Request, env: RuntimeEnv): boolean {
   if (!env.ADMIN_TOKEN && !env.AUTH_PASSWORD) return true;
   return isAuthorized(req, env);
+}
+
+function shouldRecordStats(api: string): { record: boolean; count: number } {
+  const rate = STATS_SAMPLE_RATES[api] ?? 1;
+  if (rate >= 1) return { record: true, count: 1 };
+  if (rate <= 0) return { record: false, count: 0 };
+  return Math.random() < rate
+    ? { record: true, count: Math.round(1 / rate) }
+    : { record: false, count: 0 };
+}
+
+function isCacheableRequest(req: Request, api: string): boolean {
+  if (req.method !== 'GET') return false;
+  return (API_CACHE_SECONDS[api] ?? 0) > 0;
+}
+
+async function handleCachedApi(
+  req: Request,
+  api: string,
+  runtime: AppRuntime,
+  handler: () => Promise<Response> | Response,
+): Promise<Response> {
+  const ttl = API_CACHE_SECONDS[api] ?? 0;
+  if (!ttl || !isCacheableRequest(req, api)) return handler();
+
+  const url = new URL(req.url);
+  const cacheKey = new Request(`${url.origin}/__api_cache/${API_CACHE_VERSION}/${api}${url.search}`, { method: 'GET' });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const hit = new Response(cached.body, cached);
+    hit.headers.set('x-api-cache', 'hit');
+    return hit;
+  }
+
+  const response = await handler();
+  if (response.ok) {
+    const cachedResponse = new Response(response.body, response);
+    cachedResponse.headers.set('cache-control', `public, max-age=${ttl}`);
+    cachedResponse.headers.set('x-api-cache', 'miss');
+    runtime.waitUntil.waitUntil(cache.put(cacheKey, cachedResponse.clone()));
+    return cachedResponse;
+  }
+  return response;
 }
 
 async function handleCachedDashboard(
@@ -310,9 +379,15 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   const endpointCtx: EndpointContext = { sigOpts, pool: runtime.pool, ctx: runtime.waitUntil };
 
   if (api && api !== 'dashboard' && api !== 'stats_detail' && api !== 'sign' && api !== 'admin_refill') {
-    runtime.waitUntil.waitUntil(
-      Promise.all([runtime.stats.record(api), runtime.stats.recordHourlyHit(api)]).catch(() => {})
-    );
+    const sampled = shouldRecordStats(api);
+    if (sampled.record) {
+      runtime.waitUntil.waitUntil(
+        Promise.all([
+          runtime.stats.record(api, sampled.count),
+          runtime.stats.recordHourlyHit(api, sampled.count),
+        ]).catch(() => {})
+      );
+    }
   }
 
   if (url.pathname === '/sign' || api === 'sign') {
@@ -364,21 +439,21 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
     });
   }
 
-  if (api === 'item_info') return handleItemInfo(req, endpointCtx);
+  if (api === 'item_info') return handleCachedApi(req, api, runtime, () => handleItemInfo(req, endpointCtx));
   if (api === 'player') return handlePlayer(req);
-  if (api === 'search') return handleSearch(req, endpointCtx);
-  if (api === 'directory') return handleDirectory(req, endpointCtx);
-  if (api === 'book_share') return handleBookShare(req, endpointCtx);
-  if (api === 'comment_list') return handleCommentList(req, endpointCtx);
-  if (api === 'comment_page') return handleCommentPage(req, endpointCtx);
-  if (api === 'content') return handleContent(req, endpointCtx);
-  if (api === 'wkcontent') return handleWkcontent(req, endpointCtx);
+  if (api === 'search') return handleCachedApi(req, api, runtime, () => handleSearch(req, endpointCtx));
+  if (api === 'directory') return handleCachedApi(req, api, runtime, () => handleDirectory(req, endpointCtx));
+  if (api === 'book_share') return handleCachedApi(req, api, runtime, () => handleBookShare(req, endpointCtx));
+  if (api === 'comment_list') return handleCachedApi(req, api, runtime, () => handleCommentList(req, endpointCtx));
+  if (api === 'comment_page') return handleCachedApi(req, api, runtime, () => handleCommentPage(req, endpointCtx));
+  if (api === 'content') return handleCachedApi(req, api, runtime, () => handleContent(req, endpointCtx));
+  if (api === 'wkcontent') return handleCachedApi(req, api, runtime, () => handleWkcontent(req, endpointCtx));
   if (api === 'toutiao_article') return handleToutiaoArticle(req);
-  if (api === 'toutiao') return handleToutiao(req, endpointCtx);
-  if (api === 'full') return handleFull(req, endpointCtx);
-  if (api === 'video') return handleVideo(req, endpointCtx);
-  if (api === 'manga') return handleManga(req, endpointCtx);
-  if (api === 'book') return handleBook(req, endpointCtx);
+  if (api === 'toutiao') return handleCachedApi(req, api, runtime, () => handleToutiao(req, endpointCtx));
+  if (api === 'full') return handleCachedApi(req, api, runtime, () => handleFull(req, endpointCtx));
+  if (api === 'video') return handleCachedApi(req, api, runtime, () => handleVideo(req, endpointCtx));
+  if (api === 'manga') return handleCachedApi(req, api, runtime, () => handleManga(req, endpointCtx));
+  if (api === 'book') return handleCachedApi(req, api, runtime, () => handleBook(req, endpointCtx));
 
   return jsonResponse({
     success: false,
