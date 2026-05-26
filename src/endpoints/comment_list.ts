@@ -1,10 +1,11 @@
 // Paragraph comment list for a chapter paragraph.
 // Upstream returns plain JSON; no chapter-content AES decrypt is required.
 
+import { RUNTIME_CONFIG } from '../config.js';
 import { signedFetch, ok, badRequest, serverError, type EndpointContext } from './base.js';
+import { normalizeDigitId, parseBoundedIntParam } from './params.js';
 
 const COMMENT_LIST_URL = 'https://api5-normal-lf.fqnovel.com/reading/ugc/idea/comment_list/v/';
-const DIGITS = /^\d+$/;
 
 const OPTIONAL_KEYS = [
   'item_version',
@@ -63,14 +64,38 @@ async function fetchCommentList(req: Request, ctx: EndpointContext): Promise<
   { text: string; parsed: unknown } | { response: Response }
 > {
   const u = new URL(req.url);
-  const itemId = normalizeDigits(u.searchParams.get('item_id'));
-  const bookId = normalizeDigits(u.searchParams.get('book_id'));
+  const itemId = normalizeDigitId(u.searchParams.get('item_id'));
+  const bookId = normalizeDigitId(u.searchParams.get('book_id'));
   if (!itemId) return { response: badRequest('缺少item_id参数') };
   if (!bookId) return { response: badRequest('缺少book_id参数') };
 
   const params = new URLSearchParams();
   for (const key of OPTIONAL_KEYS) {
-    params.set(key, normalizeDigits(u.searchParams.get(key)) ?? DEFAULTS[key]);
+    if (key === 'offset') {
+      const offset = parseBoundedIntParam(
+        u.searchParams.get(key),
+        key,
+        Number(DEFAULTS[key]),
+        0,
+        RUNTIME_CONFIG.parameterLimits.commentMaxOffset,
+      );
+      if ('response' in offset) return { response: offset.response };
+      params.set(key, offset.text);
+      continue;
+    }
+    if (key === 'count') {
+      const count = parseBoundedIntParam(
+        u.searchParams.get(key),
+        key,
+        Number(DEFAULTS[key]),
+        1,
+        RUNTIME_CONFIG.parameterLimits.commentMaxCount,
+      );
+      if ('response' in count) return { response: count.response };
+      params.set(key, count.text);
+      continue;
+    }
+    params.set(key, normalizeDigitId(u.searchParams.get(key)) ?? DEFAULTS[key]);
   }
   params.set('item_id', itemId);
   params.set('book_id', bookId);
@@ -95,12 +120,6 @@ async function fetchCommentList(req: Request, ctx: EndpointContext): Promise<
   } catch (e) {
     return { response: serverError((e as Error).message) };
   }
-}
-
-function normalizeDigits(value: string | null): string | null {
-  const normalized = value?.trim() ?? '';
-  if (!normalized) return null;
-  return DIGITS.test(normalized) ? normalized : null;
 }
 
 function renderCommentPage(payload: unknown): string {

@@ -4,25 +4,24 @@
 // Quirk: this endpoint uses aid=1319 (not the global 1967). The signature
 // layer reads aid from the query string when present, so this just works.
 
+import { RUNTIME_CONFIG } from '../config.js';
 import { signedFetch, ok, badRequest, serverError, type EndpointContext } from './base.js';
+import { parseDigitIdList } from './params.js';
 
 const URL_TEMPLATE = 'https://novel.snssdk.com/api/novel/book/directory/detail/v/';
-const ITEM_IDS_PATTERN = /^\d+(,\d+)*$/;
-
 const SAFARI_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 ' +
   '(KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1';
 
 export async function handleItemInfo(req: Request, ctx: EndpointContext): Promise<Response> {
   const u = new URL(req.url);
-  const raw = u.searchParams.get('item_ids');
-  if (!raw) {
-    return badRequest('缺少item_ids参数', '?item_ids=7507512821328904729,7507960973773242905');
-  }
-  const itemIds = raw.replace(/\s+/g, '').replace(/^,+|,+$/g, '');
-  if (!ITEM_IDS_PATTERN.test(itemIds)) {
-    return badRequest('item_ids参数格式不正确', '逗号分隔的数字ID');
-  }
+  const parsed = parseDigitIdList(
+    u.searchParams.get('item_ids'),
+    'item_ids',
+    RUNTIME_CONFIG.parameterLimits.itemInfoMaxItemIds,
+  );
+  if ('response' in parsed) return parsed.response;
+  const itemIds = parsed.value;
 
   const url = `${URL_TEMPLATE}?aid=1319&item_ids=${encodeURIComponent(itemIds)}`;
 

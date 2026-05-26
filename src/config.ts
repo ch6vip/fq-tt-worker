@@ -24,4 +24,14 @@ export const RUNTIME_CONFIG = {
     comment_list: 60,
     comment_page: 60,
   } as Record<string, number>,
+  parameterLimits: {
+    contentMaxItemIds: 20,
+    fullMaxItemIds: 100,
+    itemInfoMaxItemIds: 50,
+    searchQueryMaxLength: 80,
+    searchMaxOffset: 1000,
+    searchMaxCount: 50,
+    commentMaxOffset: 1000,
+    commentMaxCount: 100,
+  },
 };

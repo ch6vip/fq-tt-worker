@@ -145,6 +145,27 @@ https://你的域名/?api=content&item_ids=7360705605574607385
 | `manga` | 漫画 | `item_ids`、`decode` | `?api=manga&item_ids=123` |
 | `player` | HTML 播放器 | `item_id` | `?api=player&item_id=123` |
 
+### 公开接口参数上限
+
+公开业务接口会先做本地参数校验，参数不合法时直接返回 `400`，不会进入签名、设备池或上游请求。
+
+| 接口 | 限制 |
+|---|---|
+| `content` | `item_ids` 最多 20 个数字 ID |
+| `full` | `item_ids` 最多 100 个数字 ID，`book_id` 必须是数字 |
+| `item_info` | `item_ids` 最多 50 个数字 ID |
+| `search` | 关键词最长 80 字符，`offset` 最大 1000，`count` 最大 50 |
+| `comment_list`、`comment_page` | `offset` 最大 1000，`count` 最大 100 |
+
+常见错误状态码：
+
+| 状态码 | 含义 |
+|---|---|
+| `400` | 参数缺失、格式错误或超过上限 |
+| `502` | 上游 HTTP 错误、响应解析失败、解密失败或设备认证重试失败 |
+| `503` | 设备池为空 |
+| `504` | 上游请求超时 |
+
 ### 配置和静态端点
 
 | 端点 | 功能 | 访问方式 |
@@ -225,6 +246,7 @@ http://localhost:8787
 - 上游请求统一设置超时，默认 15 秒，避免慢上游长期占用 Worker 执行时间。
 
 固定运行参数集中在 `src/config.ts`，包括统计采样比例、业务接口 TTL、上游超时时间和缓存版本号。
+公开接口参数上限也集中在 `src/config.ts` 的 `parameterLimits` 中。
 
 ## 历史适配
 

@@ -14,6 +14,7 @@
 
 import { signRequest } from '../signature.js';
 import { fetchWithTimeout } from '../http.js';
+import { RUNTIME_CONFIG } from '../config.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -23,6 +24,7 @@ import {
   serverError,
   type EndpointContext,
 } from './base.js';
+import { parseDigitIdList } from './params.js';
 import type { Device } from '../device/pool.js';
 
 const FULL_URL_BASE = 'https://reading.snssdk.com/reading/reader/full/v/';
@@ -41,8 +43,13 @@ interface ChapterOut {
 
 export async function handleContent(req: Request, ctx: EndpointContext): Promise<Response> {
   const u = new URL(req.url);
-  const itemIds = u.searchParams.get('item_ids');
-  if (!itemIds) return badRequest('缺少item_ids参数');
+  const parsedItemIds = parseDigitIdList(
+    u.searchParams.get('item_ids'),
+    'item_ids',
+    RUNTIME_CONFIG.parameterLimits.contentMaxItemIds,
+  );
+  if ('response' in parsedItemIds) return parsedItemIds.response;
+  const itemIds = parsedItemIds.value;
 
   const apiTypeReq = u.searchParams.get('api_type') ?? 'full';
   const customUrl = u.searchParams.get('custom_url') ?? '';

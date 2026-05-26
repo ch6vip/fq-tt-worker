@@ -3,6 +3,7 @@
 
 import { signRequest } from '../signature.js';
 import { fetchWithTimeout } from '../http.js';
+import { RUNTIME_CONFIG } from '../config.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -13,6 +14,7 @@ import {
 } from './base.js';
 import { getCM, refillCMPool } from '../crypto/cm.js';
 import type { Device } from '../device/pool.js';
+import { parseDigitIdList } from './params.js';
 
 interface FullResponse {
   data?: { item_infos?: Record<string, ChapterInfo> | ChapterInfo[] };
@@ -82,17 +84,25 @@ export async function handleFull(req: Request, ctx: EndpointContext): Promise<Re
     itemIds = Array.isArray(body.item_ids) ? body.item_ids : [];
     if (!bookId) return badRequest('缺少必要参数: book_id');
     if (itemIds.length === 0) return badRequest('缺少必要参数: item_ids (必须是数组)');
+    if (!/^\d+$/.test(bookId)) return badRequest('book_id参数格式不正确');
+    if (itemIds.some((id) => !/^\d+$/.test(String(id)))) return badRequest('item_ids参数格式不正确');
   } else if (req.method === 'GET') {
     const u = new URL(req.url);
     bookId = u.searchParams.get('book_id');
     const rawIds = u.searchParams.get('item_ids') ?? '';
     if (!bookId) return badRequest('缺少必要参数: book_id');
+    if (!/^\d+$/.test(bookId)) return badRequest('book_id参数格式不正确');
     if (!rawIds) return badRequest('缺少必要参数: item_ids');
     if (rawIds.startsWith('[')) {
       try { itemIds = JSON.parse(rawIds); }
       catch { return badRequest('item_ids参数格式错误'); }
+      if (!Array.isArray(itemIds) || itemIds.some((id) => !/^\d+$/.test(String(id)))) {
+        return badRequest('item_ids参数格式不正确');
+      }
     } else {
-      itemIds = rawIds.split(',').map(s => s.trim()).filter(Boolean);
+      const parsed = parseDigitIdList(rawIds, 'item_ids', RUNTIME_CONFIG.parameterLimits.fullMaxItemIds);
+      if ('response' in parsed) return parsed.response;
+      itemIds = parsed.ids;
     }
     if (itemIds.length === 0) return badRequest('item_ids参数不能为空');
   } else {
@@ -100,7 +110,9 @@ export async function handleFull(req: Request, ctx: EndpointContext): Promise<Re
       status: 405, headers: { 'content-type': 'application/json; charset=utf-8' },
     });
   }
-  if (itemIds.length > 300) return badRequest('单次请求章节数量不能超过300个');
+  if (itemIds.length > RUNTIME_CONFIG.parameterLimits.fullMaxItemIds) {
+    return badRequest(`单次请求章节数量不能超过${RUNTIME_CONFIG.parameterLimits.fullMaxItemIds}个`);
+  }
 
   try {
     // Refill CM keypair pool in background for next request.

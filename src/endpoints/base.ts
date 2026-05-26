@@ -173,10 +173,21 @@ export function badRequest(error: string, hint?: string): Response {
 }
 
 export function serverError(error: string): Response {
+  const status = classifyErrorStatus(error);
   return new Response(JSON.stringify({ success: false, error }, null, 2), {
-    status: 500,
+    status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
+}
+
+function classifyErrorStatus(error: string): number {
+  if (/upstream timeout|AbortError|timed out/i.test(error)) return 504;
+  if (/device pool is empty/i.test(error)) return 503;
+  if (/upstream HTTP|video_model HTTP|fallback_api HTTP|HTTP \d{3}|DEVICE_FAILED|withDeviceRetry exhausted|fetchWithDevice failed/i.test(error)) return 502;
+  if (/JSON解析|JSON 解析|decryptResponse|decrypt failed|AES|响应中缺少|所有章节均无内容|响应无对应|为空|无法解析|未找到/i.test(error)) {
+    return 502;
+  }
+  return 500;
 }
 
 /**

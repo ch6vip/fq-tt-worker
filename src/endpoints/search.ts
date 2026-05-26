@@ -5,6 +5,7 @@
 
 import { signRequest } from '../signature.js';
 import { fetchWithTimeout } from '../http.js';
+import { RUNTIME_CONFIG } from '../config.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -14,6 +15,7 @@ import {
   serverError,
   type EndpointContext,
 } from './base.js';
+import { parseBoundedIntParam, validateTextLength } from './params.js';
 
 const FQNOVEL_BASE = 'https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/search/tab/v/';
 const FANQIE_BASE = 'https://api.fanqiesdk.com/api/novel/channel/homepage/search/search/v1/';
@@ -79,17 +81,42 @@ export async function handleSearch(req: Request, ctx: EndpointContext): Promise<
   if (searchType === 'fanqie') {
     const q = u.searchParams.get('q');
     if (!q) return badRequest('缺少搜索关键词参数q');
-    const offset = u.searchParams.get('offset') ?? '0';
-    return handleFanqieSearch(q, offset, ctx);
+    const lengthError = validateTextLength(q, 'q', RUNTIME_CONFIG.parameterLimits.searchQueryMaxLength);
+    if (lengthError) return lengthError;
+    const offset = parseBoundedIntParam(
+      u.searchParams.get('offset'),
+      'offset',
+      0,
+      0,
+      RUNTIME_CONFIG.parameterLimits.searchMaxOffset,
+    );
+    if ('response' in offset) return offset.response;
+    return handleFanqieSearch(q, offset.text, ctx);
   }
 
   const query = u.searchParams.get('query');
   if (!query) return badRequest('缺少搜索关键词参数query');
-  const offset = u.searchParams.get('offset') ?? '0';
-  const count = u.searchParams.get('count') ?? '0';
+  const lengthError = validateTextLength(query, 'query', RUNTIME_CONFIG.parameterLimits.searchQueryMaxLength);
+  if (lengthError) return lengthError;
+  const offset = parseBoundedIntParam(
+    u.searchParams.get('offset'),
+    'offset',
+    0,
+    0,
+    RUNTIME_CONFIG.parameterLimits.searchMaxOffset,
+  );
+  if ('response' in offset) return offset.response;
+  const count = parseBoundedIntParam(
+    u.searchParams.get('count'),
+    'count',
+    0,
+    0,
+    RUNTIME_CONFIG.parameterLimits.searchMaxCount,
+  );
+  if ('response' in count) return count.response;
   const tabType = u.searchParams.get('tab_type') ?? '0';
-  const passback = u.searchParams.get('passback') ?? offset;
-  return handleReadingSearch(query, offset, count, tabType, passback, ctx);
+  const passback = u.searchParams.get('passback') ?? offset.text;
+  return handleReadingSearch(query, offset.text, count.text, tabType, passback, ctx);
 }
 
 async function handleReadingSearch(
