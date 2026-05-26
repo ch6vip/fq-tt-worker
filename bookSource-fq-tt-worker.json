@@ -1,0 +1,54 @@
+[
+  {
+    "bookSourceComment": "fq-tt-worker Cloudflare 书源。搜索、目录、正文走 Worker；正文段落后提供段评入口，点击后按当前段落请求 comment_list。",
+    "bookSourceGroup": "番茄",
+    "bookSourceName": "fq-tt-worker",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://fq-tt-worker.ch6vip.workers.dev",
+    "bookUrlPattern": "",
+    "concurrentRate": "",
+    "customOrder": 0,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": false,
+    "header": "User-Agent: Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36",
+    "jsLib": "function getBase(){return 'https://fq-tt-worker.ch6vip.workers.dev';}\nfunction enc(v){return encodeURIComponent(String(v==null?'':v));}\nfunction html(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}\nfunction clean(s){return String(s==null?'':s).replace(/<\\/?em>/g,'').replace(/<[^>]+>/g,'');}\nfunction getBaseUrl(){return typeof baseUrl==='undefined'?'':String(baseUrl||'');}\nfunction param(name){var m=getBaseUrl().match(new RegExp('[?&]'+name+'=([^&]*)'));return m?decodeURIComponent(m[1]):'';}\nfunction buildBookUrl(b){return getBase()+'/?api=book&book_id='+enc(b.book_id)+'&name='+enc(b.book_name||b.raw_book_name||'')+'&author='+enc(b.author||'')+'&cover='+enc(b.thumb_url||b.detail_page_thumb_url||'')+'&intro='+enc(b.abstract||b.book_abstract_v2||'')+'&kind='+enc(b.category||b.pure_category_tags||'')+'&word='+enc(b.word_number||'')+'&last='+enc(b.last_chapter_title||'');}\nfunction normalizeSearch(payload){var root=(payload&&payload.data)||payload||{};var tabs=root.search_tabs||[];var out=[];var seen={};for(var i=0;i<tabs.length;i++){var list=tabs[i].data||[];for(var j=0;j<list.length;j++){var cell=list[j]||{};var books=cell.book_data||[];for(var k=0;k<books.length;k++){var b=books[k]||{};if(!b.book_id||seen[b.book_id])continue;seen[b.book_id]=1;b.bookUrl=buildBookUrl(b);out.push(b);}}}return out;}\nfunction commentUrl(bookId,itemId,para){return getBase()+'/?api=comment_list&book_id='+enc(bookId)+'&item_id='+enc(itemId)+'&para_index='+enc(para)+'&offset=0&count=100';}\nfunction commentTag(bookId,itemId,para){var url=commentUrl(bookId,itemId,para).replace(/&/g,'&amp;');return '<comment count=\"评\" onPress=\"java.startBrowser(\\''+url+'\\',\\'段评\\')\" />';}\nfunction addCommentEntries(content,bookId,itemId){if(!content||!bookId||!itemId)return content;var lines=String(content).split('\\n');for(var i=0;i<lines.length;i++){if(String(lines[i]).trim()){lines[i]=lines[i]+commentTag(bookId,itemId,i);}}return lines.join('\\n');}",
+    "lastUpdateTime": 1779796800000,
+    "respondTime": 180000,
+    "ruleBookInfo": {
+      "author": "@js:result=param('author');",
+      "coverUrl": "@js:result=param('cover');",
+      "intro": "@js:result=param('intro');",
+      "kind": "@js:result=param('kind');",
+      "lastChapter": "@js:result=param('last');",
+      "name": "@js:result=param('name');",
+      "tocUrl": "@js:result=getBaseUrl();",
+      "wordCount": "@js:result=param('word');"
+    },
+    "ruleContent": {
+      "content": "<js>\nvar payload=JSON.parse(result);\nvar data=payload.data||{};\nvar content=data.content||'';\nvar bookId=param('book_id')||java.get('book_id')||'';\nvar itemId=param('item_ids')||param('item_id')||'';\nresult=addCommentEntries(content,bookId,itemId);\n</js>",
+      "title": "@js:result=chapter.title||'';"
+    },
+    "ruleSearch": {
+      "author": "author",
+      "bookList": "<js>\nnormalizeSearch(JSON.parse(result));\n</js>",
+      "bookUrl": "bookUrl",
+      "coverUrl": "thumb_url",
+      "intro": "abstract",
+      "kind": "category",
+      "lastChapter": "last_chapter_title",
+      "name": "book_name",
+      "wordCount": "word_number"
+    },
+    "ruleToc": {
+      "chapterList": "$.data.data.chapterListWithVolume[*].*",
+      "chapterName": "$.title",
+      "chapterUrl": "<js>\nvar itemId=java.getString('$.itemId');\nvar bookId=param('book_id')||java.get('book_id')||'';\nresult=getBase()+'/?api=content&item_ids='+enc(itemId)+'&book_id='+enc(bookId);\n</js>",
+      "isVip": "$.isChapterLock",
+      "nextTocUrl": "",
+      "updateTime": "@js:var t=java.getString('$.firstPassTime');result=t?java.timeFormat(Number(t)*1000):'';"
+    },
+    "searchUrl": "@js:\ngetBase()+'/?api=search&query='+enc(key)+'&offset='+((page-1)*10)+'&passback='+((page-1)*10)+'&count=10&tab_type=0'",
+    "weight": 0
+  }
+]
