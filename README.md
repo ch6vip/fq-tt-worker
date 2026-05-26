@@ -97,19 +97,12 @@ curl "https://你的域名/?api=admin_refill&limit=1&password=你的密码"
 | 类型 | 端点 | 访问方式 |
 |---|---|---|
 | 前端面板 | `/`、`?api=dashboard` | 公开访问 |
-| 强制刷新面板缓存 | `/?refresh=1` | 需要密码 |
 | 业务 API | `search`、`content`、`book`、`video`、`manga` 等 | 公开访问 |
 | 状态 API | `stats_detail`、`device_pool` | 设置 `AUTH_PASSWORD` 或 `ADMIN_TOKEN` 后需要密码 |
 | 管理 API | `admin_refill`、`admin_insert_device` | 始终需要密码 |
 | EdgeOne 诊断 | `kv_probe` | 历史兼容端点，Cloudflare 部署无需使用 |
 
 面板缓存 6 小时。普通打开面板仍会产生一次 Worker 请求，但缓存命中时不会每次读取 D1。面板底部的刷新倒计时由浏览器本地 JavaScript 更新，不会自动请求 Cloudflare。
-
-需要立即刷新面板缓存时：
-
-```bash
-curl "https://你的域名/?refresh=1&password=你的密码"
-```
 
 ## API 使用
 
@@ -174,11 +167,17 @@ https://你的域名/?api=content&item_ids=7360705605574607385
 | `stats_detail` | 运行统计、调用计数、设备数 | 设置密码后需要 | `?api=stats_detail&password=xxx` |
 | `device_pool` | 设备池分组状态 | 设置密码后需要 | `?api=device_pool&password=xxx` |
 | `admin_refill` | 手动补充设备池 | 需要 | `?api=admin_refill&limit=1&password=xxx` |
-| `admin_insert_device` | 手动写入设备 | 需要 | `?api=admin_insert_device&device_id=...&install_id=...&secret_key=...&password=xxx` |
+| `admin_insert_device` | 手动写入设备 | 需要 | `POST /?api=admin_insert_device&password=xxx` |
 | `sign` | 签名调试 | 仅 `DEBUG_SIGN=1` 时开放 | `?api=sign&q=aid=1967` |
 | `kv_probe` | EdgeOne KV 诊断 | 需要 | `?api=kv_probe&password=xxx` |
 
-`admin_insert_device` 的 `secret_key` 必须是 32 位十六进制字符串。
+`admin_insert_device` 只接受 POST JSON，`secret_key` 必须是 32 位十六进制字符串。不要把设备密钥放在 URL 参数里。
+
+```bash
+curl -X POST "https://你的域名/?api=admin_insert_device&password=你的密码" \
+  -H "content-type: application/json" \
+  --data '{"device_id":"123","install_id":"456","secret_key":"00112233445566778899AABBCCDDEEFF"}'
+```
 
 ## 常用命令
 
@@ -219,10 +218,13 @@ http://localhost:8787
 - 倒计时只在浏览器本地更新，不消耗 Cloudflare 请求。
 - 每次打开面板仍然算一次 Worker 请求，这是 Cloudflare 入口请求，无法完全变成零消耗。
 
-业务 API 请求会消耗 Worker 请求、CPU、上游 fetch、D1 设备池读取和少量统计写入。当前实现做了两类优化：
+业务 API 请求会消耗 Worker 请求、CPU、上游 fetch、D1 设备池读取和少量统计写入。当前实现做了以下优化：
 
 - 高频接口统计写入会采样，`content`、`full`、`comment_list`、`comment_page` 按约 20% 采样，`search` 按约 50% 采样，并用权重补回估算调用量。
 - GET 业务接口会使用 Workers Cache API 做短缓存。目录和书籍信息缓存较长，正文默认缓存 1 小时，搜索缓存 10 分钟，段评缓存 1 分钟。
+- 上游请求统一设置超时，默认 15 秒，避免慢上游长期占用 Worker 执行时间。
+
+固定运行参数集中在 `src/config.ts`，包括统计采样比例、业务接口 TTL、上游超时时间和缓存版本号。
 
 ## 历史适配
 

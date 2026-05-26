@@ -2,6 +2,7 @@
 // Mirrors final_php/WkcontentEndpoint.php (115 lines).
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -47,7 +48,7 @@ export async function handleWkcontent(req: Request, ctx: EndpointContext): Promi
         `&tone_id=${encodeURIComponent(toneId)}${STATIC_TAIL}${device.device_id}`;
       const qs = new URL(url).search.slice(1);
       const sig = await signRequest(qs, null, ctx.sigOpts);
-      const res = await fetch(url, { headers: { ...HEADERS_BASE, ...sig } });
+      const res = await fetchWithTimeout(url, { headers: { ...HEADERS_BASE, ...sig } });
       if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);
       if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
       return res.text();

@@ -11,6 +11,7 @@
 // job; CompressionStream/file_put_contents have no Worker equivalent anyway.
 
 import type { EndpointContext } from '../endpoints/base.js';
+import { fetchWithTimeout } from '../http.js';
 
 export interface PicInfo {
   picUrl?: string;
@@ -79,7 +80,7 @@ export async function downloadAndDecryptImages(
       const url = pic.picUrl ?? '';
       if (!url) return { url, format: 'unknown', error: 'missing picUrl' };
       try {
-        const res = await fetch(url);
+        const res = await fetchWithTimeout(url);
         if (!res.ok) return { url, format: 'unknown', error: `HTTP ${res.status}` };
         const enc = new Uint8Array(await res.arrayBuffer());
         const dec = await decryptImage(enc, key);

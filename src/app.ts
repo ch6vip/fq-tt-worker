@@ -1,6 +1,7 @@
 import { DEFAULT_ARGUS_CONSTANTS, type ArgusConstants } from './crypto/argus.js';
 import bookSource from '../bookSource-fq-tt-worker.json';
 import paragraphRule from '../paragraphRule-fq-tt-worker.json';
+import { RUNTIME_CONFIG } from './config.js';
 import { registerAndroidDevice } from './device/register.js';
 import { handleBook } from './endpoints/book.js';
 import { handleBookShare } from './endpoints/book_share.js';
@@ -20,33 +21,6 @@ import { handleWkcontent } from './endpoints/wkcontent.js';
 import type { EndpointContext } from './endpoints/base.js';
 import type { DevicePoolStore, StatsStore, WaitUntilContext } from './platform.js';
 import { signRequest, type SignatureOptions } from './signature.js';
-
-const DASHBOARD_CACHE_VERSION = 'dashboard_v2_countdown';
-const API_CACHE_VERSION = 'api_v1';
-
-const STATS_SAMPLE_RATES: Record<string, number> = {
-  content: 0.2,
-  full: 0.2,
-  comment_list: 0.2,
-  comment_page: 0.2,
-  search: 0.5,
-};
-
-const API_CACHE_SECONDS: Record<string, number> = {
-  book: 21600,
-  directory: 21600,
-  full: 3600,
-  content: 3600,
-  search: 600,
-  item_info: 3600,
-  book_share: 1800,
-  manga: 3600,
-  video: 600,
-  toutiao: 3600,
-  wkcontent: 3600,
-  comment_list: 60,
-  comment_page: 60,
-};
 
 export interface RuntimeEnv {
   AID: string;
@@ -181,7 +155,7 @@ function isProtectedEndpointAllowed(req: Request, env: RuntimeEnv): boolean {
 }
 
 function shouldRecordStats(api: string): { record: boolean; count: number } {
-  const rate = STATS_SAMPLE_RATES[api] ?? 1;
+  const rate = RUNTIME_CONFIG.statsSampleRates[api] ?? 1;
   if (rate >= 1) return { record: true, count: 1 };
   if (rate <= 0) return { record: false, count: 0 };
   return Math.random() < rate
@@ -191,7 +165,7 @@ function shouldRecordStats(api: string): { record: boolean; count: number } {
 
 function isCacheableRequest(req: Request, api: string): boolean {
   if (req.method !== 'GET') return false;
-  return (API_CACHE_SECONDS[api] ?? 0) > 0;
+  return (RUNTIME_CONFIG.apiCacheSeconds[api] ?? 0) > 0;
 }
 
 async function handleCachedApi(
@@ -200,11 +174,11 @@ async function handleCachedApi(
   runtime: AppRuntime,
   handler: () => Promise<Response> | Response,
 ): Promise<Response> {
-  const ttl = API_CACHE_SECONDS[api] ?? 0;
+  const ttl = RUNTIME_CONFIG.apiCacheSeconds[api] ?? 0;
   if (!ttl || !isCacheableRequest(req, api)) return handler();
 
   const url = new URL(req.url);
-  const cacheKey = new Request(`${url.origin}/__api_cache/${API_CACHE_VERSION}/${api}${url.search}`, { method: 'GET' });
+  const cacheKey = new Request(`${url.origin}/__api_cache/${RUNTIME_CONFIG.apiCacheVersion}/${api}${url.search}`, { method: 'GET' });
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) {
@@ -236,7 +210,7 @@ async function handleCachedDashboard(
   }
 
   const cache = caches.default;
-  const cacheKey = new Request(`${url.origin}/__dashboard_cache/${DASHBOARD_CACHE_VERSION}`, { method: 'GET' });
+  const cacheKey = new Request(`${url.origin}/__dashboard_cache/${RUNTIME_CONFIG.dashboardCacheVersion}`, { method: 'GET' });
   if (!forceRefresh) {
     const cached = await cache.match(cacheKey);
     if (cached) return cached;
@@ -250,23 +224,21 @@ async function handleCachedDashboard(
   return cachedResponse;
 }
 
-async function readDevicePayload(req: Request, url: URL): Promise<{
+async function readDevicePayload(req: Request): Promise<{
   device_id: string;
   install_id: string;
   secret_key: string;
 }> {
-  let body: Partial<{ device_id: string; install_id: string; secret_key: string }> = {};
-  if (req.method !== 'GET') {
-    try {
-      body = await req.json() as Partial<{ device_id: string; install_id: string; secret_key: string }>;
-    } catch {
-      body = {};
-    }
+  let body: Partial<{ device_id: string; install_id: string; secret_key: string }>;
+  try {
+    body = await req.json() as Partial<{ device_id: string; install_id: string; secret_key: string }>;
+  } catch {
+    throw new Error('request body must be JSON');
   }
 
-  const device_id = body.device_id ?? url.searchParams.get('device_id') ?? '';
-  const install_id = body.install_id ?? url.searchParams.get('install_id') ?? '';
-  const secret_key = body.secret_key ?? url.searchParams.get('secret_key') ?? '';
+  const device_id = body.device_id ?? '';
+  const install_id = body.install_id ?? '';
+  const secret_key = body.secret_key ?? '';
   if (!device_id || !install_id || !/^[A-Fa-f0-9]{32}$/.test(secret_key)) {
     throw new Error('invalid device payload');
   }
@@ -432,7 +404,15 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
 
   if (api === 'admin_insert_device') {
     if (!isAuthorized(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-    const device = await readDevicePayload(req, url);
+    if (req.method !== 'POST') {
+      return jsonResponse({ success: false, error: 'admin_insert_device requires POST JSON' }, 405);
+    }
+    let device: { device_id: string; install_id: string; secret_key: string };
+    try {
+      device = await readDevicePayload(req);
+    } catch (e) {
+      return jsonResponse({ success: false, error: (e as Error).message }, 400);
+    }
     await runtime.pool.insert(device);
     return jsonResponse({
       success: true,

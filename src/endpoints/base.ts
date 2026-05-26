@@ -5,6 +5,7 @@
 import { signRequest, type SignatureOptions } from '../signature.js';
 import type { Device } from '../device/pool.js';
 import type { DevicePoolStore, WaitUntilContext } from '../platform.js';
+import { fetchWithTimeout } from '../http.js';
 
 const DEFAULT_USER_AGENT =
   'com.dragon.read/66732 (Linux; U; Android 10; zh_CN; Pixel 4 XL; ' +
@@ -60,7 +61,7 @@ export async function signedFetch(
     Object.assign(headers, sig);
   }
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: opts.body != null ? 'POST' : 'GET',
     body: opts.body,
     headers,

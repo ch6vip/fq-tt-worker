@@ -5,6 +5,7 @@
 //     fallback_api, decrypt main_url / backup_url_1 via spade URL decrypt.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -80,7 +81,7 @@ export async function handleVideo(req: Request, ctx: EndpointContext): Promise<R
       const qs = new URL(url).search.slice(1);
       const sig = await signRequest(qs, body, ctx.sigOpts);
 
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: 'POST',
         body,
         headers: {
@@ -126,7 +127,7 @@ export async function handleVideo(req: Request, ctx: EndpointContext): Promise<R
         .replace(/&stream_type=encrypt/, '')
         .replace(/\?stream_type=encrypt&/, '?');
 
-      const fbRes = await fetch(cleanUrl, { headers: { 'user-agent': PHOENIX_UA } });
+      const fbRes = await fetchWithTimeout(cleanUrl, { headers: { 'user-agent': PHOENIX_UA } });
       if (!fbRes.ok) throw new Error(`fallback_api HTTP ${fbRes.status}`);
       const fbData = await fbRes.json() as FallbackResponse;
       const videoData = fbData.video_info?.data;

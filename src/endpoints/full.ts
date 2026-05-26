@@ -2,6 +2,7 @@
 // Mirrors final_php/FullEndpoint.php — supports GET and POST.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -113,7 +114,7 @@ export async function handleFull(req: Request, ctx: EndpointContext): Promise<Re
       const qs = new URL(url).search.slice(1);
       const sig = await signRequest(qs, postBody, ctx.sigOpts);
 
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: 'POST',
         body: postBody,
         headers: {

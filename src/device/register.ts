@@ -6,6 +6,7 @@
 // upstream calls). Never invoke from a fetch() handler.
 
 import { signRequest, type SignatureOptions } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   ttEncrypt,
   androidDecryptKey,
@@ -62,7 +63,7 @@ async function postDeviceRegister(deviceType: string, openudid: string): Promise
   });
   const encrypted = await ttEncrypt(payload);
 
-  const res = await fetch(DEVICE_REGISTER_URL, {
+  const res = await fetchWithTimeout(DEVICE_REGISTER_URL, {
     method: 'POST',
     body: encrypted,
     headers: { 'user-agent': USER_AGENT_REGISTER },
@@ -104,7 +105,7 @@ async function tryActivatePremium(deviceId: string, installId: string, deviceTyp
   });
 
   try {
-    const res = await fetch(`${PREMIUM_URL}?${params}`, {
+    const res = await fetchWithTimeout(`${PREMIUM_URL}?${params}`, {
       method: 'POST',
       body,
       headers: { 'content-type': 'application/json' },
@@ -153,7 +154,7 @@ async function registerKeyAndGetSecret(
       // Workers fetch() doesn't reliably forward content-encoding: gzip on
       // outbound requests — send uncompressed JSON instead. The payload is
       // small (~120 bytes) so compression gains are negligible.
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: 'POST',
         body: postJson,
         headers: { 'user-agent': USER_AGENT_REGISTER, ...sigHeaders },

@@ -4,6 +4,7 @@
 // Mirrors final_php/DirectoryEndpoint.php.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -62,7 +63,7 @@ async function getFqnovelDirectory(bookId: string, ctx: EndpointContext): Promis
       const queryString = new URL(url).search.slice(1);
       const sig = await signRequest(queryString, null, ctx.sigOpts);
 
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { 'user-agent': 'Mozilla/5.0 (Linux; Android 13)', ...sig },
       });
       if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);

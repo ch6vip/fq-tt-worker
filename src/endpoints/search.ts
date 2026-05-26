@@ -4,6 +4,7 @@
 // Mirrors final_php/SearchEndpoint.php.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -117,7 +118,7 @@ async function handleReadingSearch(
       const url = `${FQNOVEL_BASE}?${queryString}`;
       const sig = await signRequest(queryString, null, ctx.sigOpts);
 
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { 'user-agent': 'com.dragon.read', ...sig },
       });
       if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);

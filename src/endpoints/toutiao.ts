@@ -10,6 +10,7 @@
 //   - Otherwise: content is just base64-encoded.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import { ok, badRequest, serverError, type EndpointContext } from './base.js';
 
 // 1024-bit safe prime captured from PHP (gmp_init decimal string).
@@ -178,7 +179,7 @@ export async function handleToutiao(req: Request, ctx: EndpointContext): Promise
     const sig = await signRequest(qs, null, ctx.sigOpts);
     const { y, dhState } = await generateY();
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         'user-agent': 'com.ss.android.article.news/13400 (Linux; U; Android 10; zh_CN; tb8788p1_64_bsp; Build/QQ3A.200805.001; Cronet/TTNetVersion:fc4cebd3 2024-12-10 QuicVersion:d9628e3d 2024-10-11)',
         'accept-encoding': 'gzip, deflate',

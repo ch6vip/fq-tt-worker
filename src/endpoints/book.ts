@@ -2,6 +2,7 @@
 // Mirrors final_php/BookEndpoint.php — uses ABogus signature (not Argus/Gorgon).
 
 import { generateABogus } from '../crypto/abogus.js';
+import { fetchWithTimeout } from '../http.js';
 import { ok, badRequest, serverError, type EndpointContext } from './base.js';
 
 const URL_BASE = 'https://fanqienovel.com/api/reader/directory/detail';
@@ -31,7 +32,7 @@ export async function handleBook(req: Request, _ctx: EndpointContext): Promise<R
   const url = `${URL_BASE}?${queryString}&msToken=${msToken}&a_bogus=${encodeURIComponent(aBogus)}`;
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { 'user-agent': CHROME_UA, accept: 'application/json' },
     });
     if (!res.ok) return serverError(`upstream HTTP ${res.status}`);

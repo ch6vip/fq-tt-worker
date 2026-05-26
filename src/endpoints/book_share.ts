@@ -7,6 +7,7 @@
 //   both     — both, merged response (default)
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -39,7 +40,7 @@ const EXCERPT_TAIL =
 async function fetchSigned(url: string, ctx: EndpointContext): Promise<string> {
   const qs = new URL(url).search.slice(1);
   const sig = await signRequest(qs, null, ctx.sigOpts);
-  const res = await fetch(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
+  const res = await fetchWithTimeout(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
   if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);
   if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
   return res.text();

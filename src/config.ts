@@ -1,0 +1,27 @@
+export const RUNTIME_CONFIG = {
+  dashboardCacheVersion: 'dashboard_v2_countdown',
+  apiCacheVersion: 'api_v1',
+  upstreamTimeoutMs: 15000,
+  statsSampleRates: {
+    content: 0.2,
+    full: 0.2,
+    comment_list: 0.2,
+    comment_page: 0.2,
+    search: 0.5,
+  } as Record<string, number>,
+  apiCacheSeconds: {
+    book: 21600,
+    directory: 21600,
+    full: 3600,
+    content: 3600,
+    search: 600,
+    item_info: 3600,
+    book_share: 1800,
+    manga: 3600,
+    video: 600,
+    toutiao: 3600,
+    wkcontent: 3600,
+    comment_list: 60,
+    comment_page: 60,
+  } as Record<string, number>,
+};

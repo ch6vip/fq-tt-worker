@@ -13,6 +13,7 @@
 // Not yet ported: ts=听书 (audio), comment=评论 (comments), api_type=novel.
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -138,7 +139,7 @@ function buildRequestUrl(
 async function makeChapterRequest(url: string, ctx: EndpointContext): Promise<ChapterApiResponse> {
   const queryString = new URL(url).search.slice(1);
   const sig = await signRequest(queryString, null, ctx.sigOpts);
-  const res = await fetch(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
+  const res = await fetchWithTimeout(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
   if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);
   if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
   try { return await res.json() as ChapterApiResponse; }

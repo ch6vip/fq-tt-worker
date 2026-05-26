@@ -7,6 +7,7 @@
 // only; the PHP version's disk caching/hosting is dropped — not Worker-friendly).
 
 import { signRequest } from '../signature.js';
+import { fetchWithTimeout } from '../http.js';
 import {
   withDeviceRetry,
   isDeviceAuthFail,
@@ -53,7 +54,7 @@ export async function handleManga(req: Request, ctx: EndpointContext): Promise<R
       const url = buildUrl(itemId, device, apiType, customUrl);
       const qs = new URL(url).search.slice(1);
       const sig = await signRequest(qs, null, ctx.sigOpts);
-      const res = await fetch(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
+      const res = await fetchWithTimeout(url, { headers: { 'user-agent': 'com.dragon.read', ...sig } });
       if (isDeviceAuthFail(res.status)) throw new Error(`DEVICE_FAILED: HTTP ${res.status}`);
       if (!res.ok) throw new Error(`upstream HTTP ${res.status}`);
       const body = await res.json() as { data?: { content?: string } };
