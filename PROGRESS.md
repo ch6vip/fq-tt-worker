@@ -2,7 +2,7 @@
 
 > 自动维护的进度文档。每完成一个文件/类/端点并测试通过，立即更新此文档。
 
-最后更新：2026-05-25
+最后更新：2026-05-26
 
 ## 总体进度
 
@@ -38,7 +38,7 @@
 |---|---|---|
 | ttEncrypt + 辅助 | `src/device/tt_crypto.ts` | ✅ KDF + roundtrip + 解密对拍 |
 | 设备工具 | `src/device/util.ts` | ✅ androidReverseHex 严格对拍 |
-| registerAndroidDevice 主流程 | `src/device/register.ts` | 待真实环境验证 |
+| registerAndroidDevice 主流程 | `src/device/register.ts` | ✅ 本机真实环境通过；EdgeOne 出口返回 `device_id=0/install_id=0` |
 | BaseEndpoint helper | `src/endpoints/base.ts` | — |
 
 ### M2（14 endpoint 全部接入）
@@ -78,6 +78,8 @@
 | StatsManager (D1) | `src/stats.ts` |
 | Worker 入口 + cron | `src/index.ts` |
 | D1 schema | `migrations/0001_init.sql` |
+| EdgeOne 入口 | `src/edgeone.ts` |
+| EdgeOne KV 适配 | `src/edgeone_kv.ts` |
 
 **测试统计：5 文件，46/46 通过。tsc 干净。**
 
@@ -124,9 +126,33 @@ test/toutiao.test.ts        5 ✓  (modPow + Java BigInt + DH 1024-bit decrypt)
 
 3. **Toutiao (1024-bit DH) 对拍 PHP**：modPow 标准向量 + Java BigInteger 兼容性（高位 0x80 prepend 0x00）+ 固定私钥/服务端密文 round-trip 全对拍。
 
+## EdgeOne 部署验证（2026-05-26）
+
+- ✅ 已通过 EdgeOne CLI 直接上传部署到生产环境。
+- ✅ 生产地址：`https://fq-tt-worker.edgeone.cool`
+- ✅ 项目 ID：`pages-kosctd77qhzs`
+- ✅ EdgeOne KV 绑定变量：`FQTT_KV`
+- ✅ KV `put/get/delete` 通过 `kv_probe` 验证。
+- ✅ `device_pool` / `stats_detail` 可正常读写 KV。
+- ✅ 手动种入 1 台设备后，`search&query=test` 在 EdgeOne 生产环境返回 `200 OK` 和真实上游数据。
+- ✅ `admin_refill` 已改为默认小批量 `limit=1`，避免 EdgeOne HTTP 请求超时。
+- ✅ 新增受保护的 `admin_insert_device`，用于把外部注册成功的设备写入 EdgeOne KV。
+
+已确认限制：
+
+- EdgeOne 边缘出口调用 `i.snssdk.com/service/2/device_register/` 时，上游返回 `{"device_id":0,"install_id":0}`。
+- 同一套 TS 注册代码在本机真实网络环境可成功获得 `device_id/install_id/secret_key`。
+- 因此当前阻塞点不是 EdgeOne KV、KV binding、签名加密或打包问题，而是设备注册上游对 EdgeOne 出口环境的响应差异。
+
+推荐生产策略：
+
+- EdgeOne 负责业务 API、签名、KV 设备池、统计和读取。
+- 设备注册放到本机、VPS、腾讯云 SCF、GitHub Actions 等外部定时任务。
+- 外部任务注册成功后调用 `admin_insert_device` 写入 EdgeOne KV。
+
 ## 仍然待办（需外部环境验证）
 
-1. **真实环境对拍 `registerAndroidDevice`** — 本地 `wrangler dev` 跑一次完整注册流程
+1. **外部补池任务落地** — 用 SCF / VPS / GitHub Actions 定时注册设备并调用 `admin_insert_device`
 2. **端到端 smoke 测试** — 逐个 endpoint 与 PHP 原版对比真实响应（确认上游接受 TS 生成的签名头）
 
 这两项 code-only 无法推进，需要 wrangler dev + 网络。
@@ -134,6 +160,8 @@ test/toutiao.test.ts        5 ✓  (modPow + Java BigInt + DH 1024-bit decrypt)
 ## 已确认风险消除
 
 - ✅ CF 出口 IP 不会被风控（用户告知）
+- ✅ EdgeOne KV 读写、设备池和业务 API 已在生产环境验证
+- ✅ 本机真实注册设备通过；EdgeOne 注册失败已定位为上游对 EdgeOne 出口返回无效 ID
 - ✅ 46 个 oracle 测试覆盖所有加密原语 + ABogus/spade/image
 - ✅ 14 个 endpoint 路由全部就位
 - ✅ TypeScript strict mode 干净

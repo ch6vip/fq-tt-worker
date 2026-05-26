@@ -18,6 +18,8 @@ import type { EndpointContext } from './endpoints/base.js';
 import type { DevicePoolStore, StatsStore, WaitUntilContext } from './platform.js';
 import { signRequest, type SignatureOptions } from './signature.js';
 
+const DASHBOARD_CACHE_VERSION = 'dashboard_v2_countdown';
+
 export interface RuntimeEnv {
   AID: string;
   LICENSE_ID: string;
@@ -87,12 +89,96 @@ function isAuthorized(req: Request, env: RuntimeEnv): boolean {
   return auth === `Bearer ${expected}`;
 }
 
+function isProtectedEndpointAllowed(req: Request, env: RuntimeEnv): boolean {
+  if (!env.ADMIN_TOKEN && !env.AUTH_PASSWORD) return true;
+  return isAuthorized(req, env);
+}
+
+async function handleCachedDashboard(
+  req: Request,
+  env: RuntimeEnv,
+  runtime: AppRuntime,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const forceRefresh = url.searchParams.get('refresh') === '1';
+  if (forceRefresh && !isAuthorized(req, env)) {
+    return jsonResponse({ success: false, error: 'unauthorized' }, 401);
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(`${url.origin}/__dashboard_cache/${DASHBOARD_CACHE_VERSION}`, { method: 'GET' });
+  if (!forceRefresh) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+  }
+
+  const response = await handleDashboard(runtime.stats, runtime.pool);
+  const cachedResponse = new Response(response.body, response);
+  cachedResponse.headers.set('cache-control', 'public, max-age=21600');
+  cachedResponse.headers.set('x-dashboard-cache', forceRefresh ? 'refresh' : 'miss');
+  runtime.waitUntil.waitUntil(cache.put(cacheKey, cachedResponse.clone()));
+  return cachedResponse;
+}
+
+async function readDevicePayload(req: Request, url: URL): Promise<{
+  device_id: string;
+  install_id: string;
+  secret_key: string;
+}> {
+  let body: Partial<{ device_id: string; install_id: string; secret_key: string }> = {};
+  if (req.method !== 'GET') {
+    try {
+      body = await req.json() as Partial<{ device_id: string; install_id: string; secret_key: string }>;
+    } catch {
+      body = {};
+    }
+  }
+
+  const device_id = body.device_id ?? url.searchParams.get('device_id') ?? '';
+  const install_id = body.install_id ?? url.searchParams.get('install_id') ?? '';
+  const secret_key = body.secret_key ?? url.searchParams.get('secret_key') ?? '';
+  if (!device_id || !install_id || !/^[A-Fa-f0-9]{32}$/.test(secret_key)) {
+    throw new Error('invalid device payload');
+  }
+  return { device_id, install_id, secret_key: secret_key.toUpperCase() };
+}
+
 export async function refillDevicePool(env: RuntimeEnv, pool: DevicePoolStore, stats: StatsStore): Promise<{
   target: number;
   readyBefore: number;
   needed: number;
+  attempted: number;
   inserted: number;
   failed: number;
+  errors: string[];
+}>;
+export async function refillDevicePool(
+  env: RuntimeEnv,
+  pool: DevicePoolStore,
+  stats: StatsStore,
+  maxAttempts: number,
+): Promise<{
+  target: number;
+  readyBefore: number;
+  needed: number;
+  attempted: number;
+  inserted: number;
+  failed: number;
+  errors: string[];
+}>;
+export async function refillDevicePool(
+  env: RuntimeEnv,
+  pool: DevicePoolStore,
+  stats: StatsStore,
+  maxAttempts?: number,
+): Promise<{
+  target: number;
+  readyBefore: number;
+  needed: number;
+  attempted: number;
+  inserted: number;
+  failed: number;
+  errors: string[];
 }> {
   await stats.setMeta('last_cron_run', Date.now());
   await stats.setMeta('first_run', Date.now(), 'insert-if-missing');
@@ -105,18 +191,26 @@ export async function refillDevicePool(env: RuntimeEnv, pool: DevicePoolStore, s
 
   const target = parseInt(env.MIN_POOL_SIZE, 10);
   const readyBefore = await pool.countReady();
-  if (readyBefore >= target) return { target, readyBefore, needed: 0, inserted: 0, failed: 0 };
+  if (readyBefore >= target) {
+    return { target, readyBefore, needed: 0, attempted: 0, inserted: 0, failed: 0, errors: [] };
+  }
 
   const needed = target - readyBefore;
+  const attempted = Math.max(0, Math.min(
+    needed,
+    Number.isFinite(maxAttempts ?? NaN) ? Math.floor(maxAttempts!) : needed,
+  ));
   let inserted = 0;
   let failed = 0;
+  const errors: string[] = [];
   const sigOpts = buildSignatureOptions(env);
 
-  for (let i = 0; i < needed; i++) {
+  for (let i = 0; i < attempted; i++) {
     try {
-      const dev = await registerAndroidDevice(sigOpts);
+      const dev = await registerAndroidDevice(sigOpts, { throwOnFailure: true });
       if (!dev) {
         failed++;
+        errors.push('registerAndroidDevice returned null');
         continue;
       }
       await pool.insert({
@@ -127,11 +221,13 @@ export async function refillDevicePool(env: RuntimeEnv, pool: DevicePoolStore, s
       inserted++;
     } catch (e) {
       failed++;
-      console.error('refill: registerAndroidDevice failed:', (e as Error).message);
+      const message = (e as Error).message;
+      errors.push(message);
+      console.error('refill: registerAndroidDevice failed:', message);
     }
   }
 
-  return { target, readyBefore, needed, inserted, failed };
+  return { target, readyBefore, needed, attempted, inserted, failed, errors };
 }
 
 export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: AppRuntime): Promise<Response> {
@@ -155,16 +251,18 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   }
 
   if (api === 'dashboard') {
-    return handleDashboard(runtime.stats, runtime.pool);
+    return handleCachedDashboard(req, env, runtime);
   }
 
   if (api === 'stats_detail') {
+    if (!isProtectedEndpointAllowed(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
     const ready = await runtime.pool.countReady();
     const counters = await runtime.stats.snapshot();
     return jsonResponse({ success: true, data: { ready_devices: ready, ts: Date.now(), counters } });
   }
 
   if (api === 'device_pool') {
+    if (!isProtectedEndpointAllowed(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
     return jsonResponse({ success: true, data: await runtime.pool.groupStats() });
   }
 
@@ -177,7 +275,22 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
 
   if (api === 'admin_refill') {
     if (!isAuthorized(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
-    return jsonResponse({ success: true, data: await refillDevicePool(env, runtime.pool, runtime.stats) });
+    const limitParam = url.searchParams.get('limit');
+    const limit = limitParam == null ? 1 : Number(limitParam);
+    return jsonResponse({ success: true, data: await refillDevicePool(env, runtime.pool, runtime.stats, limit) });
+  }
+
+  if (api === 'admin_insert_device') {
+    if (!isAuthorized(req, env)) return jsonResponse({ success: false, error: 'unauthorized' }, 401);
+    const device = await readDevicePayload(req, url);
+    await runtime.pool.insert(device);
+    return jsonResponse({
+      success: true,
+      data: {
+        device_id: device.device_id,
+        install_id: device.install_id,
+      },
+    });
   }
 
   if (api === 'item_info') return handleItemInfo(req, endpointCtx);
@@ -199,6 +312,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
     error: api ? `endpoint not yet ported: ${api}` : 'missing ?api=',
     available_now: [
       'sign (debug)', 'stats_detail', 'device_pool', 'admin_refill',
+      'admin_insert_device',
       'item_info', 'player', 'search', 'directory', 'book_share',
       'content', 'wkcontent', 'toutiao_article', 'toutiao', 'full',
       'video (partial)', 'manga (partial)', 'book',

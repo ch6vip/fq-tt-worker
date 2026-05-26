@@ -145,6 +145,8 @@ function buildHtml(dataJson: string): string {
 <div class="text-center text-xs text-gray-400 py-4">
   <span x-text="'数据更新于 ' + new Date(data.ts).toLocaleString('zh-CN')"></span>
   <span class="mx-2">|</span>
+  <span x-text="'缓存刷新倒计时 ' + refreshCountdown()"></span>
+  <span class="mx-2">|</span>
   <span>fq-tt-worker 监控面板</span>
 </div>
 
@@ -155,11 +157,10 @@ const __DATA__ = ${dataJson};
 function dashboard() {
   return {
     data: {},
-    refreshTimer: null,
+    tick: Date.now(),
     init() {
       this.data = __DATA__;
-      // Auto refresh every 60s.
-      this.refreshTimer = setInterval(() => location.reload(), 60_000);
+      setInterval(() => { this.tick = Date.now(); }, 1000);
     },
     formatNum(n) {
       if (n==null) return '—';
@@ -228,6 +229,16 @@ function dashboard() {
       const h = m / 60;
       if (h < 24) return h.toFixed(1) + ' 小时前';
       return Math.round(h / 24) + ' 天前';
+    },
+    refreshCountdown() {
+      if (!this.data.ts) return '—';
+      const remaining = Math.max(0, this.data.ts + 21600000 - this.tick);
+      const hours = Math.floor(remaining / 3600000);
+      const minutes = Math.floor((remaining % 3600000) / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      return String(hours).padStart(2, '0') + ':' +
+        String(minutes).padStart(2, '0') + ':' +
+        String(seconds).padStart(2, '0');
     }
   };
 }

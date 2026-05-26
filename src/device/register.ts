@@ -25,6 +25,10 @@ export interface RegisteredDevice {
   device_type: string;         // for debugging
 }
 
+interface RegisterAndroidDeviceOptions {
+  throwOnFailure?: boolean;
+}
+
 const DEVICE_REGISTER_URL = 'https://i.snssdk.com/service/2/device_register/';
 const REGISTERKEY_URL = 'https://reading.snssdk.com/reading/crypt/registerkey';
 const PREMIUM_URL = 'https://api5-normal-sinfonlinea.fqnovel.com/reading/user/privilege/add/v/';
@@ -68,7 +72,7 @@ async function postDeviceRegister(deviceType: string, openudid: string): Promise
   const body = await res.json() as DeviceRegisterResponse;
   const deviceId = body.device_id_str ?? (body.device_id != null ? String(body.device_id) : '');
   const installId = body.install_id_str ?? (body.install_id != null ? String(body.install_id) : '');
-  if (!deviceId || !installId) {
+  if (!deviceId || !installId || deviceId === '0' || installId === '0') {
     throw new Error(`device_register bad shape: ${JSON.stringify(body)}`);
   }
   return { deviceId, installId };
@@ -189,7 +193,10 @@ function sleep(ms: number): Promise<void> {
  * Full registration flow. Returns null on failure (does NOT throw, so caller
  * cron loop can just try again next tick).
  */
-export async function registerAndroidDevice(sigOpts: SignatureOptions): Promise<RegisteredDevice | null> {
+export async function registerAndroidDevice(
+  sigOpts: SignatureOptions,
+  options: RegisterAndroidDeviceOptions = {},
+): Promise<RegisteredDevice | null> {
   const deviceType = randomDeviceType();
   const openudid = randomOpenudid();
   console.log(`registering android device: device_type=${deviceType} openudid=${openudid}`);
@@ -199,6 +206,7 @@ export async function registerAndroidDevice(sigOpts: SignatureOptions): Promise<
     ({ deviceId, installId } = await postDeviceRegister(deviceType, openudid));
   } catch (e) {
     console.error('device_register failed:', (e as Error).message);
+    if (options.throwOnFailure) throw new Error(`device_register failed: ${(e as Error).message}`);
     return null;
   }
   console.log(`device_register ok: device_id=${deviceId} install_id=${installId}`);
@@ -209,6 +217,7 @@ export async function registerAndroidDevice(sigOpts: SignatureOptions): Promise<
   const secretKey = await registerKeyAndGetSecret(deviceId, installId, sigOpts);
   if (!secretKey) {
     console.error(`secret_key fetch failed for device ${deviceId}`);
+    if (options.throwOnFailure) throw new Error(`secret_key fetch failed for device ${deviceId}`);
     return null;
   }
   console.log(`secret_key fetched for ${deviceId}`);
