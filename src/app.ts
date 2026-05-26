@@ -2,6 +2,7 @@ import { DEFAULT_ARGUS_CONSTANTS, type ArgusConstants } from './crypto/argus.js'
 import { registerAndroidDevice } from './device/register.js';
 import { handleBook } from './endpoints/book.js';
 import { handleBookShare } from './endpoints/book_share.js';
+import { handleCommentList } from './endpoints/comment_list.js';
 import { handleContent } from './endpoints/content.js';
 import { handleDashboard } from './endpoints/dashboard.js';
 import { handleDirectory } from './endpoints/directory.js';
@@ -298,6 +299,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   if (api === 'search') return handleSearch(req, endpointCtx);
   if (api === 'directory') return handleDirectory(req, endpointCtx);
   if (api === 'book_share') return handleBookShare(req, endpointCtx);
+  if (api === 'comment_list') return handleCommentList(req, endpointCtx);
   if (api === 'content') return handleContent(req, endpointCtx);
   if (api === 'wkcontent') return handleWkcontent(req, endpointCtx);
   if (api === 'toutiao_article') return handleToutiaoArticle(req);
@@ -314,7 +316,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
       'sign (debug)', 'stats_detail', 'device_pool', 'admin_refill',
       'admin_insert_device',
       'item_info', 'player', 'search', 'directory', 'book_share',
-      'content', 'wkcontent', 'toutiao_article', 'toutiao', 'full',
+      'comment_list', 'content', 'wkcontent', 'toutiao_article', 'toutiao', 'full',
       'video (partial)', 'manga (partial)', 'book',
     ],
   }, api ? 501 : 400);

@@ -129,6 +129,7 @@ https://你的域名/?api=content&item_ids=7360705605574607385
 | `content` | 章节正文 | `item_ids` | `?api=content&item_ids=123` |
 | `book` | 书籍目录 | `book_id` | `?api=book&book_id=123` |
 | `book_share` | 分享/摘录 | `book_id` | `?api=book_share&book_id=123` |
+| `comment_list` | 段评列表 | `item_id`、`book_id`、`para_index` | `?api=comment_list&item_id=123&book_id=456&para_index=0` |
 | `directory` | 小说目录 | `book_id` | `?api=directory&book_id=123` |
 | `full` | 多章节批量获取 | `book_id`、`item_ids` | `?api=full&book_id=123&item_ids=1,2,3` |
 | `toutiao` | 头条小说正文 | `item_ids` | `?api=toutiao&item_ids=123` |
