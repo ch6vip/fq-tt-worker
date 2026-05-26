@@ -128,6 +128,18 @@ function commentIconResponse(): Response {
   });
 }
 
+function commentIconPngResponse(): Response {
+  const pngBase64 =
+    'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAXklEQVR4nO3VwQ0AIAgDQCZl/xn44AZGKoghffRpegESxd2lM63lBBDwL0BVvSIhgJmlhgACrgHI1c+aAAHI3mdNgIDngNbv+BR1+nYXGJBRDgOyyiFAZnkIUBUCCFjJP4SR0H+XSwAAAABJRU5ErkJggg==';
+  const bytes = Uint8Array.from(atob(pngBase64), (c) => c.charCodeAt(0));
+  return new Response(bytes, {
+    headers: {
+      'content-type': 'image/png',
+      'cache-control': 'public, max-age=86400',
+    },
+  });
+}
+
 function isAuthorized(req: Request, env: RuntimeEnv): boolean {
   const expected = env.ADMIN_TOKEN || env.AUTH_PASSWORD;
   if (!expected) return false;
@@ -290,6 +302,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
     return paragraphRuleJsResponse();
   }
   if (url.pathname === '/comment-icon.svg') return commentIconResponse();
+  if (url.pathname === '/comment-icon.png') return commentIconPngResponse();
   if (url.pathname === '/favicon.ico') return new Response(null, { status: 204 });
   const api = url.searchParams.get('api') ?? (url.pathname === '/' ? 'dashboard' : '');
 
