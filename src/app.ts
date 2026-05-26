@@ -92,6 +92,21 @@ function bookSourceResponse(): Response {
   });
 }
 
+function commentIconResponse(): Response {
+  const svg =
+    '<svg width="120" height="64" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M22 10h76q14 0 14 14v17q0 14-14 14H52L31 61v-6h-9Q8 55 8 41V24Q8 10 22 10z" ' +
+    'fill="none" stroke="#666666" stroke-width="4"/>' +
+    '<text x="60" y="41" font-family="Arial,sans-serif" font-size="26" font-weight="700" ' +
+    'text-anchor="middle" fill="#666666">评</text></svg>';
+  return new Response(svg, {
+    headers: {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'cache-control': 'public, max-age=86400',
+    },
+  });
+}
+
 function isAuthorized(req: Request, env: RuntimeEnv): boolean {
   const expected = env.ADMIN_TOKEN || env.AUTH_PASSWORD;
   if (!expected) return false;
@@ -247,6 +262,7 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   if (url.pathname === '/bookSource-fq-tt-worker.json' || url.searchParams.get('api') === 'book_source') {
     return bookSourceResponse();
   }
+  if (url.pathname === '/comment-icon.svg') return commentIconResponse();
   if (url.pathname === '/favicon.ico') return new Response(null, { status: 204 });
   const api = url.searchParams.get('api') ?? (url.pathname === '/' ? 'dashboard' : '');
 
