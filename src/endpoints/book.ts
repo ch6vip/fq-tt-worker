@@ -36,9 +36,31 @@ export async function handleBook(req: Request, _ctx: EndpointContext): Promise<R
     });
     if (!res.ok) return serverError(`upstream HTTP ${res.status}`);
     const text = await res.text();
-    try { return ok(JSON.parse(text)); }
+    try { return ok(withChapterBookId(JSON.parse(text), bookId)); }
     catch { return ok(text); }
   } catch (e) {
     return serverError((e as Error).message);
   }
+}
+
+function withChapterBookId(payload: unknown, bookId: string): unknown {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const root = payload as {
+    data?: {
+      chapterListWithVolume?: unknown;
+    };
+  };
+  const volumes = root.data?.chapterListWithVolume;
+  if (!Array.isArray(volumes)) return payload;
+
+  root.data!.chapterListWithVolume = volumes.map((volume) => {
+    if (!Array.isArray(volume)) return volume;
+    return volume.map((chapter) => {
+      if (!chapter || typeof chapter !== 'object') return chapter;
+      return { ...chapter, book_id: bookId, bookId };
+    });
+  });
+
+  return payload;
 }
