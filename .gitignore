@@ -13,3 +13,6 @@ fq-tt-worker-edgeone.zip
 dashboard-*.png
 model-health-*.png
 .playwright-mcp/
+
+# Local import helper generated during Legado debugging
+paragraphRule-fq-tt-worker-import.json
