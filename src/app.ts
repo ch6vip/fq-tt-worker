@@ -59,6 +59,7 @@ export interface RuntimeEnv {
   MIN_POOL_SIZE: string;
   AUTH_PASSWORD?: string;
   ADMIN_TOKEN?: string;
+  DEBUG_SIGN?: string;
   ARGUS_SIGN_KEY?: string;
   ARGUS_AES_KEY?: string;
   ARGUS_AES_IV?: string;
@@ -391,6 +392,9 @@ export async function handleAppRequest(req: Request, env: RuntimeEnv, runtime: A
   }
 
   if (url.pathname === '/sign' || api === 'sign') {
+    if (env.DEBUG_SIGN !== '1') {
+      return jsonResponse({ success: false, error: 'sign debug endpoint disabled' }, 404);
+    }
     const q = url.searchParams.get('q') ?? '';
     const headers = await signRequest(q, null, sigOpts);
     return jsonResponse({ success: true, query: q, headers });

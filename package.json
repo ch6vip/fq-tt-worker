@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "build:edgeone": "esbuild src/edgeone.ts --bundle --format=esm --target=es2022 --outfile=dist-edgeone/edge-functions/index.js && node scripts/prepare-edgeone.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

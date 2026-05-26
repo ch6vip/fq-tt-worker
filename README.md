@@ -2,7 +2,7 @@
 
 内容 API 的 Cloudflare Workers 边缘代理实现，将 `fq-tt` 的 PHP 签名链路移植到 TypeScript，并使用 Cloudflare D1 保存设备池和运行统计。
 
-当前主部署目标是 Cloudflare Workers。EdgeOne 相关代码仍保留，但仅作为实验性适配。
+当前主部署目标是 Cloudflare Workers。历史 EdgeOne 适配代码已不作为推荐部署路径。
 
 ## 功能特性
 
@@ -101,7 +101,7 @@ curl "https://你的域名/?api=admin_refill&limit=1&password=你的密码"
 | 业务 API | `search`、`content`、`book`、`video`、`manga` 等 | 公开访问 |
 | 状态 API | `stats_detail`、`device_pool` | 设置 `AUTH_PASSWORD` 或 `ADMIN_TOKEN` 后需要密码 |
 | 管理 API | `admin_refill`、`admin_insert_device` | 始终需要密码 |
-| EdgeOne 诊断 | `kv_probe` | 需要密码，仅 EdgeOne KV 环境有意义 |
+| EdgeOne 诊断 | `kv_probe` | 历史兼容端点，Cloudflare 部署无需使用 |
 
 面板缓存 6 小时。普通打开面板仍会产生一次 Worker 请求，但缓存命中时不会每次读取 D1。面板底部的刷新倒计时由浏览器本地 JavaScript 更新，不会自动请求 Cloudflare。
 
@@ -175,7 +175,7 @@ https://你的域名/?api=content&item_ids=7360705605574607385
 | `device_pool` | 设备池分组状态 | 设置密码后需要 | `?api=device_pool&password=xxx` |
 | `admin_refill` | 手动补充设备池 | 需要 | `?api=admin_refill&limit=1&password=xxx` |
 | `admin_insert_device` | 手动写入设备 | 需要 | `?api=admin_insert_device&device_id=...&install_id=...&secret_key=...&password=xxx` |
-| `sign` | 签名调试 | 公开 | `?api=sign&q=aid=1967` |
+| `sign` | 签名调试 | 仅 `DEBUG_SIGN=1` 时开放 | `?api=sign&q=aid=1967` |
 | `kv_probe` | EdgeOne KV 诊断 | 需要 | `?api=kv_probe&password=xxx` |
 
 `admin_insert_device` 的 `secret_key` 必须是 32 位十六进制字符串。
@@ -200,9 +200,6 @@ npm test
 
 # 部署 Cloudflare Worker
 npm run deploy
-
-# 构建 EdgeOne 产物
-npm run build:edgeone
 ```
 
 本地开发默认地址通常是：
@@ -227,22 +224,9 @@ http://localhost:8787
 - 高频接口统计写入会采样，`content`、`full`、`comment_list`、`comment_page` 按约 20% 采样，`search` 按约 50% 采样，并用权重补回估算调用量。
 - GET 业务接口会使用 Workers Cache API 做短缓存。目录和书籍信息缓存较长，正文默认缓存 1 小时，搜索缓存 10 分钟，段评缓存 1 分钟。
 
-## EdgeOne 状态
+## 历史适配
 
-项目保留 EdgeOne Pages Edge Functions 构建：
-
-```bash
-npm run build:edgeone
-```
-
-产物目录是 `dist-edgeone`，配置文件是 `edgeone.json`。
-
-已知情况：
-
-- EdgeOne KV 绑定变量名需要是 `FQTT_KV`。
-- EdgeOne 没有 Cloudflare D1 和 Workers `scheduled()`，设备池和定时补池语义不同。
-- 实测 EdgeOne 边缘出口调用设备注册接口时，上游可能返回 `device_id=0/install_id=0`。同一套代码在本机网络可正常注册。
-- 因此当前推荐生产部署仍使用 Cloudflare Workers。
+仓库中仍保留 EdgeOne 相关源码用于参考，但当前生产部署和文档维护以 Cloudflare Workers 为准。
 
 ## 项目结构
 
@@ -254,9 +238,7 @@ src/
 ├── stats.ts              D1 统计
 ├── device/               设备注册和设备池
 ├── endpoints/            各业务端点
-├── crypto/               签名和解密算法
-├── edgeone.ts            EdgeOne 入口
-└── edgeone_kv.ts         EdgeOne KV 适配
+└── crypto/               签名和解密算法
 
 migrations/
 └── 0001_init.sql         D1 表结构
